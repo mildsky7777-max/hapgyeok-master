@@ -12413,5 +12413,81 @@ const _origRenderMiniDashboard = typeof renderMiniDashboard === 'function' ? ren
     loadNext(0);
 })();
 </script>
+<!-- ===== 드릴다운 선택 오버레이 (자격증 → 과목) : local-upgrade ===== -->
+<style>
+#drilldownOverlay{position:fixed;inset:0;background:var(--bg);z-index:99999;display:none;flex-direction:column;overscroll-behavior:contain}
+#drilldownOverlay.show{display:flex}
+#drilldownOverlay .dd-header{display:flex;align-items:center;gap:8px;padding:16px 14px;border-bottom:1px solid var(--border);background:var(--surface)}
+#drilldownOverlay .dd-title{flex:1;font-size:1.15em;font-weight:800;color:var(--text);text-align:center}
+#drilldownOverlay .dd-iconbtn{width:40px;height:40px;border:none;background:transparent;font-size:1.25em;color:var(--text);cursor:pointer;border-radius:10px}
+#drilldownOverlay .dd-iconbtn:active{background:var(--bg)}
+#drilldownOverlay .dd-body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px 14px 32px;display:flex;flex-direction:column;gap:11px}
+#drilldownOverlay .dd-hint{text-align:center;color:var(--text-muted,#8e8e93);font-size:0.92em;margin:2px 0 8px}
+#drilldownOverlay .dd-card{display:flex;align-items:center;gap:13px;padding:18px 16px;background:var(--surface);border:1px solid var(--border);border-radius:16px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.05);transition:transform .08s}
+#drilldownOverlay .dd-card:active{transform:scale(0.985)}
+#drilldownOverlay .dd-emoji{font-size:1.7em;width:46px;height:46px;display:flex;align-items:center;justify-content:center;background:var(--bg);border-radius:12px;flex-shrink:0}
+#drilldownOverlay .dd-name{flex:1;font-size:1.12em;font-weight:700;color:var(--text)}
+#drilldownOverlay .dd-count{font-size:0.86em;font-weight:700;color:var(--text-muted,#8e8e93);background:var(--bg);padding:5px 11px;border-radius:20px;white-space:nowrap}
+#drilldownOverlay .dd-arrow{color:var(--text-muted,#c7c7cc);font-size:1.2em;margin-left:2px}
+</style>
+<div id="drilldownOverlay">
+  <div class="dd-header">
+    <button class="dd-iconbtn" id="ddBack" onclick="drillBack()" style="visibility:hidden">←</button>
+    <div class="dd-title" id="ddTitle">자격증 선택</div>
+    <button class="dd-iconbtn" onclick="closeDrilldown()">✕</button>
+  </div>
+  <div class="dd-body" id="ddBody"></div>
+</div>
+<script>
+(function(){
+  let ddStep=1, ddField=null;
+  const FMETA={'산안기':{e:'🦺',c:'#EF4444'},'조경':{e:'🌳',c:'#10B981'},'전기':{e:'⚡',c:'#F59E0B'}};
+  function fieldOf(q){ return (typeof getAutoField==='function'?getAutoField(q.tag):null); }
+  function renderDrill(){
+    const body=document.getElementById('ddBody'); body.innerHTML='';
+    const title=document.getElementById('ddTitle'), back=document.getElementById('ddBack');
+    if(ddStep===1){
+      title.innerText='자격증 선택'; back.style.visibility='hidden';
+      const hint=document.createElement('div'); hint.className='dd-hint'; hint.innerText='공부할 자격증을 선택하세요'; body.appendChild(hint);
+      const counts={}; bank.forEach(q=>{ const f=fieldOf(q); if(f) counts[f]=(counts[f]||0)+1; });
+      const order=['산안기','조경','전기'].filter(f=>counts[f]);
+      Object.keys(counts).forEach(f=>{ if(!order.includes(f)) order.push(f); });
+      if(order.length===0){ const e=document.createElement('div'); e.className='dd-hint'; e.innerHTML='업로드된 문제가 없습니다.<br>먼저 JSON 파일을 업로드하세요.'; body.appendChild(e); return; }
+      order.forEach(f=>{
+        const m=FMETA[f]||{e:'📁',c:'#888'};
+        const card=document.createElement('div'); card.className='dd-card'; card.style.borderLeft='6px solid '+m.c;
+        card.innerHTML=`<span class="dd-emoji">${m.e}</span><span class="dd-name">${f}</span><span class="dd-count">${counts[f]}문제</span><span class="dd-arrow">›</span>`;
+        card.onclick=()=>drillSelectField(f); body.appendChild(card);
+      });
+    } else {
+      const m=FMETA[ddField]||{e:'📁',c:'#888'};
+      title.innerText=m.e+' '+ddField; back.style.visibility='visible';
+      const hint=document.createElement('div'); hint.className='dd-hint'; hint.innerText='과목을 선택하세요'; body.appendChild(hint);
+      const subs={}; bank.filter(q=>fieldOf(q)===ddField).forEach(q=>{ const s=q.subject||'미분류(공통)'; subs[s]=(subs[s]||0)+1; });
+      const total=Object.values(subs).reduce((a,b)=>a+b,0);
+      const allc=document.createElement('div'); allc.className='dd-card'; allc.style.borderLeft='6px solid '+m.c;
+      allc.innerHTML=`<span class="dd-emoji">📚</span><span class="dd-name">전체</span><span class="dd-count">${total}문제</span>`;
+      allc.onclick=()=>drillSelectSubject(null); body.appendChild(allc);
+      Object.keys(subs).sort().forEach(s=>{
+        const card=document.createElement('div'); card.className='dd-card';
+        card.innerHTML=`<span class="dd-emoji">📖</span><span class="dd-name">${s}</span><span class="dd-count">${subs[s]}문제</span>`;
+        card.onclick=()=>drillSelectSubject(s); body.appendChild(card);
+      });
+    }
+  }
+  function drillSelectField(f){ ddField=f; if(typeof selectField==='function'){ try{selectField(f);}catch(e){} } ddStep=2; renderDrill(); }
+  function drillSelectSubject(sub){
+    if(sub){ activeSubjects=new Set([sub]); }
+    if(typeof currentIndex!=='undefined') currentIndex=0;
+    if(typeof applyFilter==='function') applyFilter();
+    if(typeof updateUI==='function') updateUI();
+    closeDrilldown();
+  }
+  window.showDrilldown=function(){ ddStep=1; ddField=null; renderDrill(); document.getElementById('drilldownOverlay').classList.add('show'); };
+  window.closeDrilldown=function(){ document.getElementById('drilldownOverlay').classList.remove('show'); };
+  window.drillBack=function(){ ddStep=1; ddField=null; renderDrill(); };
+  window.addEventListener('load',()=>{ setTimeout(()=>{ try{ if(typeof bank!=='undefined'&&bank.length) showDrilldown(); }catch(e){} },700); });
+})();
+</script>
 </body>
 </html>
