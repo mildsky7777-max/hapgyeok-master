@@ -4559,8 +4559,9 @@ let heatmapData = JSON.parse(localStorage.getItem('heatmap_v50') || '{}');
 let dailyGoal = parseInt(localStorage.getItem('dailyGoal') || '0');
 let dailyDate = localStorage.getItem('dailyDate') || '';
 let dailySolved = parseInt(localStorage.getItem('dailySolved') || '0');
+let dailySolvedByField = JSON.parse(localStorage.getItem('dailySolvedByField') || '{}'); // 자격증(field)별 오늘 푼 수
 const todayStr = new Date().toISOString().slice(0,10);
-if(dailyDate !== todayStr){ dailySolved=0; localStorage.setItem('dailySolved','0'); localStorage.setItem('dailyDate',todayStr); dailyDate=todayStr; }
+if(dailyDate !== todayStr){ dailySolved=0; localStorage.setItem('dailySolved','0'); dailySolvedByField={}; localStorage.setItem('dailySolvedByField','{}'); localStorage.setItem('dailyDate',todayStr); dailyDate=todayStr; }
 let timerInterval = null, timerSeconds = 0, isTimerRunning = false, isPomodoroBreak = false;
 let touchStartX = 0, touchEndX = 0;
 
@@ -5711,6 +5712,7 @@ function checkAnswer() {
     trackDailyActivity();
     sessionTotal++; if(isCorrect) sessionCorrect++;
     dailySolved++; localStorage.setItem('dailySolved',dailySolved);
+    { const _f=fieldMap[q.tag||'기타']||getAutoField(q.tag||'기타'); if(_f){ dailySolvedByField[_f]=(dailySolvedByField[_f]||0)+1; localStorage.setItem('dailySolvedByField', JSON.stringify(dailySolvedByField)); } }
     if(dailyGoal>0 && dailySolved===dailyGoal){ showToast('🎉 오늘의 목표 달성! 수고했습니다!','success'); fireConfetti(true); (function(){ const t=document.getElementById('inlineConfirmBtn');
             if(!t)return; t.classList.remove('feedback-goal');
             void t.offsetWidth; t.classList.add('feedback-goal');
@@ -7716,6 +7718,7 @@ function handleTimeLimitExpire() {
     trackDailyActivity();
     sessionTotal++;
     dailySolved++; localStorage.setItem('dailySolved', dailySolved);
+    { const _f=fieldMap[q.tag||'기타']||getAutoField(q.tag||'기타'); if(_f){ dailySolvedByField[_f]=(dailySolvedByField[_f]||0)+1; localStorage.setItem('dailySolvedByField', JSON.stringify(dailySolvedByField)); } }
     saveData(); updateUI(); updateStatsUI();
 }
 
@@ -11996,7 +11999,7 @@ function getTodayQuota(){
     const visible=q=>activeTags.has(q.tag||'기타')&&activeSubjects.has(q.subject||'미분류(공통)')&&(_af==='all'||(fieldMap[q.tag||'기타']||getAutoField(q.tag||'기타'))===_af);
     const remain=bank.filter(q=>visible(q)&&(!q.my_status||q.my_status==='wrong'||(typeof isSRDue==='function'&&isSRDue(q)))).length;
     const perDay=Math.max(1, Math.ceil(remain/dday));
-    const solved=dailySolved||0;
+    const solved = (_af==='all') ? (dailySolved||0) : (dailySolvedByField[_af]||0);
     return {dday, perDay, solved, left:Math.max(0,perDay-solved), done:solved>=perDay};
 }
 
