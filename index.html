@@ -8,6 +8,10 @@
     <meta name="apple-mobile-web-app-title" content="합격마스터">
     <meta name="format-detection" content="telephone=no">
     <meta name="theme-color" content="#007AFF">
+    <!-- PWA: 홈 화면 설치 + 오프라인 -->
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <script>if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){});});}</script>
     <title>합격마스터 (Ver.163+local-upgrades)</title>
 
 <!-- KaTeX 수식 렌더링 -->
@@ -2921,6 +2925,8 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
     <!-- ===== QUIZ INTERFACE ===== -->
     <div id="quiz-interface">
         <div class="quiz-surface" id="quizContent">
+            <!-- 🎯 오늘 학습 진행 (시험 D-day 권장량 — 문제 화면) -->
+            <div id="todayQuotaBar" style="display:none;margin-bottom:10px"></div>
             <!-- ===== COMPACT META ROWS (v92) ===== -->
             <div class="cmeta-wrap" id="quizMeta">
                 <!-- 통합 단일 행: 과목 + 기억강도 + 북마크 + 타이머 -->
@@ -3206,7 +3212,8 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
             <div class="settings-tab-item active" id="stab-study" onclick="switchSettingsTab('study')">학습</div>
             <div class="settings-tab-item" id="stab-stats" onclick="switchSettingsTab('stats')">현황</div>
             <div class="settings-tab-item" id="stab-config" onclick="switchSettingsTab('config')">설정</div>
-            <div class="settings-tab-item" id="stab-manage" onclick="switchSettingsTab('manage')">관리</div>
+            <div class="settings-tab-item" id="stab-analysis" onclick="switchSettingsTab('analysis')">분석</div>
+            <div class="settings-tab-item" id="stab-data" onclick="switchSettingsTab('data')">데이터</div>
         </div>
 
         <!-- Original header (hidden, kept for JS compatibility) -->
@@ -3225,6 +3232,16 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
 
             <!-- ===== 학습 탭 ===== -->
             <div class="settings-tab-pane" id="stab-pane-study">
+
+            <!-- 🎯 범위 선택 (자주 쓰는 것 — 맨 앞으로 이동) -->
+            <div style="margin-bottom:12px">
+                <div class="section-label">범위 선택</div>
+                <div class="btn-grid-3 no-select">
+                    <button class="s-btn" onclick="openFieldModal()"><span class="s-btn-icon">🏷</span>분야 설정</button>
+                    <button class="s-btn" onclick="openSubjectModal()"><span class="s-btn-icon">📚</span>과목 선택</button>
+                    <button class="s-btn" onclick="openWorkbookModal()"><span class="s-btn-icon">🗂</span>문제집</button>
+                </div>
+            </div>
 
             <!-- 🚀 빠른 실행 그리드 -->
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
@@ -3499,12 +3516,55 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
                         🔀 인터리빙 모드 <span style="font-size:0.8em;opacity:0.7">(과목 혼합)</span>
                     </label>
                 </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;padding:4px 0">
+                    <label style="font-size:0.87em;color:var(--text-sub);display:flex;align-items:center;gap:6px;cursor:pointer">
+                        <input type="checkbox" id="reviewNotifToggle" onchange="toggleReviewNotif(this)" style="width:16px;height:16px;accent-color:var(--primary)">
+                        🔔 복습 알림 <span style="font-size:0.8em;opacity:0.7">(앱 열 때 목표 미달 시)</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- 🎨 앱 설정 (관리 탭에서 이동) -->
+            <div style="margin-bottom:12px">
+                <div class="section-label">앱 설정</div>
+                <div class="btn-grid-3 no-select" style="margin-bottom:12px">
+                    <button class="s-btn" onclick="toggleDarkMode()" id="darkModeBtn">
+                        <span class="s-btn-icon">🌙</span>다크모드
+                    </button>
+                    <button class="s-btn" onclick="openSyncModal()">
+                        <span class="s-btn-icon">☁️</span>동기화
+                    </button>
+                    <button class="s-btn" onclick="openArchiveModal()">
+                        <span class="s-btn-icon">📚</span>오답노트
+                    </button>
+                </div>
+                <div style="background:var(--bg);border-radius:12px;padding:10px 14px">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                        <span style="font-size:0.87em;font-weight:600;color:var(--text)">🔠 글자 크기</span>
+                        <span style="font-size:0.82em;font-weight:700;color:var(--primary)" id="fontSizeLabel">보통</span>
+                    </div>
+                    <input type="range" id="fontSizeSlider" min="1" max="5" value="3" step="1" style="width:100%;accent-color:var(--primary);cursor:pointer" oninput="applyFontSize(this.value)">
+                    <div style="display:flex;justify-content:space-between;font-size:0.72em;color:var(--text-muted);margin-top:4px">
+                        <span>작게</span><span>보통</span><span>크게</span>
+                    </div>
+                </div>
             </div>
 
             </div><!-- /stab-pane-config -->
 
-            <!-- ===== 관리 탭 ===== -->
-            <div class="settings-tab-pane" id="stab-pane-manage" style="display:none">
+            <!-- ===== 분석 탭 ===== -->
+            <div class="settings-tab-pane" id="stab-pane-analysis" style="display:none">
+                <div style="margin-bottom:12px">
+                    <div class="section-label">분석</div>
+                    <div class="btn-grid-2 no-select">
+                        <button class="s-btn s-btn-ai" onclick="openDashboard()"><span class="s-btn-icon">📊</span>학습 분석</button>
+                        <button class="s-btn" onclick="openOMRModal()"><span class="s-btn-icon">📋</span>OMR 답안지</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== 데이터 탭 ===== -->
+            <div class="settings-tab-pane" id="stab-pane-data" style="display:none">
 
             <!-- 🛡️ 데이터 안전 상태 카드 -->
             <div id="dataSafetyCard" class="pass-strategy-card" style="display:none;margin-top:4px"></div>
@@ -3520,33 +3580,6 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
             <!-- ⑦ 관리 메뉴 -->
             <div id="morePanel">
                 <div id="morePanelBody" style="display:block;margin-top:0">
-                    <!-- 범위 선택 -->
-                    <div style="margin-bottom:12px">
-                        <div class="section-label">범위 선택</div>
-                        <div class="btn-grid-3 no-select">
-                            <button class="s-btn" onclick="openFieldModal()">
-                                <span class="s-btn-icon">🏷</span>분야 설정
-                            </button>
-                            <button class="s-btn" onclick="openSubjectModal()">
-                                <span class="s-btn-icon">📚</span>과목 선택
-                            </button>
-                            <button class="s-btn" onclick="openWorkbookModal()">
-                                <span class="s-btn-icon">🗂</span>문제집
-                            </button>
-                        </div>
-                    </div>
-                    <!-- 분석 -->
-                    <div style="margin-bottom:12px">
-                        <div class="section-label">분석</div>
-                        <div class="btn-grid-2 no-select">
-                            <button class="s-btn s-btn-ai" onclick="openDashboard()">
-                                <span class="s-btn-icon">📊</span>학습 분석
-                            </button>
-                            <button class="s-btn" onclick="openOMRModal()">
-                                <span class="s-btn-icon">📋</span>OMR 답안지
-                            </button>
-                        </div>
-                    </div>
                     <!-- 데이터 관리 -->
                     <div style="margin-bottom:12px">
                         <div class="section-label">데이터 관리</div>
@@ -3568,34 +3601,6 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
                             <span class="s-btn-icon" id="syncMainIcon">☁️</span>
                             <span id="syncMainLabel">기기 간 동기화</span>
                         </button>
-                    </div>
-                    <!-- 앱 설정 -->
-                    <div>
-                        <div class="section-label">앱 설정</div>
-                        <div class="btn-grid-3 no-select" style="margin-bottom:12px">
-                            <button class="s-btn" onclick="toggleDarkMode()" id="darkModeBtn">
-                                <span class="s-btn-icon">🌙</span>다크모드
-                            </button>
-                            <button class="s-btn" onclick="openSyncModal()">
-                                <span class="s-btn-icon">☁️</span>동기화
-                            </button>
-                            <button class="s-btn" onclick="openArchiveModal()">
-                                <span class="s-btn-icon">📚</span>오답노트
-                            </button>
-                        </div>
-                        <!-- 폰트 크기 슬라이더 -->
-                        <div style="background:var(--bg);border-radius:12px;padding:10px 14px">
-                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-                                <span style="font-size:0.87em;font-weight:600;color:var(--text)">🔠 글자 크기</span>
-                                <span style="font-size:0.82em;font-weight:700;color:var(--primary)" id="fontSizeLabel">보통</span>
-                            </div>
-                            <input type="range" id="fontSizeSlider" min="1" max="5" value="3" step="1"
-                                style="width:100%;accent-color:var(--primary);cursor:pointer"
-                                oninput="applyFontSize(this.value)">
-                            <div style="display:flex;justify-content:space-between;font-size:0.72em;color:var(--text-muted);margin-top:4px">
-                                <span>작게</span><span>보통</span><span>크게</span>
-                            </div>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -3629,7 +3634,7 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
 
             <input type="file" id="fileInput" accept=".json" style="display:none" multiple>
             <input type="file" id="restoreInput" accept=".json" style="display:none">
-            </div><!-- /stab-pane-manage -->
+            </div><!-- /stab-pane-data -->
         </div>
     </div>
 
@@ -5350,6 +5355,8 @@ function updateUI() {
 
     /* ── V162: KaTeX 수식 렌더링 ── */
     renderAllMath();
+    /* 🎯 오늘 학습 진행(D-day 권장량) 갱신 */
+    if(typeof renderTodayQuotaBar==='function') renderTodayQuotaBar();
 }
 
 /* ============================================================
@@ -7285,7 +7292,7 @@ function showStorageActionDialog(title, msg) {
                 <button onclick="autoCleanStorage()" style="width:100%;padding:13px;background:var(--primary);color:white;border:none;border-radius:12px;font-size:0.92em;font-weight:800;cursor:pointer">
                     🧹 자동 정리 (백업 후 삭제)
                 </button>
-                <button onclick="switchSettingsTab('manage');openSettingsSheet();document.getElementById('storageActionDialog').remove()" style="width:100%;padding:11px;background:var(--bg);color:var(--text);border:1.5px solid var(--border);border-radius:12px;font-size:0.88em;font-weight:700;cursor:pointer">
+                <button onclick="switchSettingsTab('data');openSettingsSheet();document.getElementById('storageActionDialog').remove()" style="width:100%;padding:11px;background:var(--bg);color:var(--text);border:1.5px solid var(--border);border-radius:12px;font-size:0.88em;font-weight:700;cursor:pointer">
                     🗂 직접 관리 (관리 탭 열기)
                 </button>
                 <button onclick="document.getElementById('storageActionDialog').remove()" style="width:100%;padding:9px;background:none;border:none;font-size:0.83em;color:var(--text-muted);cursor:pointer">
@@ -7919,14 +7926,14 @@ function toggleLearnMode(k){
 
 // ===== UI 개선: 설정 패널 탭 전환 =====
 function switchSettingsTab(tab) {
-    const tabs = ['study','stats','config','manage'];
+    const tabs = ['study','stats','config','analysis','data'];
     tabs.forEach(t => {
         const item = document.getElementById('stab-' + t);
         const pane = document.getElementById('stab-pane-' + t);
         if(item) item.classList.toggle('active', t === tab);
         if(pane) pane.style.display = (t === tab) ? 'block' : 'none';
     });
-    if(tab === 'manage') { renderWorkbookManager(); renderDataSafety(); }
+    if(tab === 'data') { renderWorkbookManager(); renderDataSafety(); }
     if(tab === 'study') renderLearningModes();
 }
 
@@ -11941,20 +11948,91 @@ function revealOptions() {
 let smartRecAction = null; // 추천 액션 저장
 
 // ── 🎯 합격 전략: 시험 D-day · 합격 예측 · 과락 경고 ──
+// ── 🔔 복습 알림 (PWA 알림 — 앱 열 때 오늘 목표 미달이면 리마인더) ──
+function toggleReviewNotif(cb){
+    if(cb.checked){
+        if(!('Notification' in window)){ showToast('이 브라우저는 알림을 지원하지 않아요'); cb.checked=false; return; }
+        Notification.requestPermission().then(p=>{
+            if(p==='granted'){ localStorage.setItem('reviewNotif','on'); showToast('🔔 복습 알림 ON — 앱 열 때 목표 미달이면 알려드려요'); }
+            else { localStorage.setItem('reviewNotif','off'); cb.checked=false; showToast('알림 권한이 거부됐어요. 브라우저 설정에서 허용해주세요.'); }
+        });
+    } else {
+        localStorage.setItem('reviewNotif','off'); showToast('복습 알림 OFF');
+    }
+}
+function checkReviewReminder(){
+    if(localStorage.getItem('reviewNotif')!=='on') return;
+    if(!('Notification' in window) || Notification.permission!=='granted') return;
+    const last=parseInt(localStorage.getItem('lastReviewNotif')||'0');
+    if(Date.now()-last < 3*3600*1000) return; // 3시간 쿨다운
+    const q=(typeof getTodayQuota==='function')?getTodayQuota():null;
+    if(q && q.left>0){
+        try{ new Notification('📚 합격마스터', {body:`오늘 목표까지 ${q.left}문제 남았어요! 잠깐 복습할까요?`, icon:'icon-192.png'}); localStorage.setItem('lastReviewNotif', String(Date.now())); }catch(e){}
+    }
+}
+window.addEventListener('load', function(){
+    var t=document.getElementById('reviewNotifToggle'); if(t) t.checked=localStorage.getItem('reviewNotif')==='on';
+    setTimeout(function(){ if(typeof checkReviewReminder==='function') checkReviewReminder(); }, 3500);
+});
+
+// 자격증(activeField)별 시험일 키 — 'all'이면 공통(examDate_v1)
+function examDateKey(){
+    return (typeof activeField!=='undefined' && activeField && activeField!=='all') ? ('examDate_'+activeField) : 'examDate_v1';
+}
 function setExamDate(v){
-    if(v) localStorage.setItem('examDate_v1', v); else localStorage.removeItem('examDate_v1');
+    const k=examDateKey();
+    if(v) localStorage.setItem(k, v); else localStorage.removeItem(k);
     renderPassStrategy();
+    if(typeof renderTodayQuotaBar==='function') renderTodayQuotaBar();
+}
+
+// ── 🎯 오늘 학습 진행: D-day 권장량 vs 오늘 푼 수 (문제 화면 표시용) ──
+function getTodayQuota(){
+    const examDate=localStorage.getItem(examDateKey());
+    if(!examDate || typeof bank==='undefined' || !bank.length) return null;
+    const dday=Math.ceil((new Date(examDate+'T00:00:00Z')-new Date(todayStr+'T00:00:00Z'))/86400000);
+    if(dday<=0) return null;
+    const _af=(typeof activeField!=='undefined')?activeField:'all';
+    const visible=q=>activeTags.has(q.tag||'기타')&&activeSubjects.has(q.subject||'미분류(공통)')&&(_af==='all'||(fieldMap[q.tag||'기타']||getAutoField(q.tag||'기타'))===_af);
+    const remain=bank.filter(q=>visible(q)&&(!q.my_status||q.my_status==='wrong'||(typeof isSRDue==='function'&&isSRDue(q)))).length;
+    const perDay=Math.max(1, Math.ceil(remain/dday));
+    const solved=dailySolved||0;
+    return {dday, perDay, solved, left:Math.max(0,perDay-solved), done:solved>=perDay};
+}
+
+function renderTodayQuotaBar(){
+    const el=document.getElementById('todayQuotaBar');
+    if(!el) return;
+    const q=getTodayQuota();
+    if(!q){ el.style.display='none'; return; }
+    el.style.display='block';
+    const pct=Math.min(100, Math.round(q.solved/q.perDay*100));
+    if(q.done){
+        el.innerHTML=`<div style="background:var(--primary-light);border:1px solid var(--success);border-radius:12px;padding:9px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+            <span style="font-size:0.82em;font-weight:800;color:var(--success)">🎉 오늘 목표 달성! (${q.solved}/${q.perDay}문제)</span>
+            <span style="font-size:0.72em;color:var(--text-muted);white-space:nowrap">D-${q.dday}</span></div>`;
+    } else {
+        el.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:9px 12px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
+                <span style="font-size:0.8em;font-weight:700;color:var(--text)">🎯 오늘 <b style="color:var(--primary)">${q.perDay}</b>문제 · ${q.solved} 완료 · <b style="color:var(--danger)">${q.left}문제 남음</b></span>
+                <span style="font-size:0.72em;color:var(--text-muted);white-space:nowrap">D-${q.dday}</span>
+            </div>
+            <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:var(--primary);border-radius:3px;transition:width 0.3s"></div></div>
+        </div>`;
+    }
 }
 
 function renderPassStrategy(){
     const card=document.getElementById('passStrategyCard');
     if(!card) return;
     if(typeof bank==='undefined' || bank.length===0){ card.style.display='none'; return; }
-    const visible = q => activeTags.has(q.tag||'기타') && activeSubjects.has(q.subject||'미분류(공통)');
+    const _af = (typeof activeField!=='undefined') ? activeField : 'all';
+    const visible = q => activeTags.has(q.tag||'기타') && activeSubjects.has(q.subject||'미분류(공통)') && (_af==='all'||(fieldMap[q.tag||'기타']||getAutoField(q.tag||'기타'))===_af);
     const vBank = bank.filter(visible);
     if(vBank.length===0){ card.style.display='none'; return; }
     card.style.display='block';
-    const examDate = localStorage.getItem('examDate_v1');
+    const fieldLabel = (_af && _af!=='all') ? _af : '전체';
+    const examDate = localStorage.getItem(examDateKey());
     const dateField = `<input type="date" id="examDateInput" value="${examDate||''}" onchange="setExamDate(this.value)" style="font-size:0.78em;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)">`;
 
     // D-day + 오늘 권장량(남은 학습/복습 ÷ 남은 일수)
@@ -12009,7 +12087,7 @@ function renderPassStrategy(){
         failHtml=`<div style="margin-top:10px;padding:9px 11px;background:var(--danger-light);border-radius:10px;font-size:0.75em;color:var(--danger);line-height:1.55">⚠️ <b>과락 위험</b> (40%↓): ${risk.join(' · ')}<br><span style="opacity:0.85">과락하면 평균과 무관하게 불합격 — 우선 보강하세요.</span></div>`;
     }
 
-    card.innerHTML = `<div style="font-size:0.84em;font-weight:800;color:var(--text);margin-bottom:9px">🎯 합격 현황</div>${ddayHtml}${predHtml}${failHtml}`;
+    card.innerHTML = `<div style="font-size:0.84em;font-weight:800;color:var(--text);margin-bottom:9px">🎯 합격 현황 <span style="font-size:0.8em;color:var(--text-muted);font-weight:600">· ${fieldLabel}</span></div>${ddayHtml}${predHtml}${failHtml}`;
 }
 
 function updateSmartRecommendation() {
