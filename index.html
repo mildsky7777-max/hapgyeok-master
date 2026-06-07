@@ -11988,6 +11988,17 @@ function setExamDate(v){
     renderPassStrategy();
     if(typeof renderTodayQuotaBar==='function') renderTodayQuotaBar();
 }
+// 자격증별 회독 목표 (전체 문제를 N번 푸는 목표)
+function reviewGoalKey(){
+    return (typeof activeField!=='undefined' && activeField && activeField!=='all') ? ('reviewGoal_'+activeField) : 'reviewGoal_v1';
+}
+function getReviewGoal(){ return Math.max(1, parseInt(localStorage.getItem(reviewGoalKey())||'1')); }
+function setReviewGoal(v){
+    const n=Math.max(1, Math.min(20, parseInt(v)||1));
+    localStorage.setItem(reviewGoalKey(), String(n));
+    renderPassStrategy();
+    if(typeof renderTodayQuotaBar==='function') renderTodayQuotaBar();
+}
 
 // ── 🎯 오늘 학습 진행: D-day 권장량 vs 오늘 푼 수 (문제 화면 표시용) ──
 function getTodayQuota(){
@@ -11997,10 +12008,20 @@ function getTodayQuota(){
     if(dday<=0) return null;
     const _af=(typeof activeField!=='undefined')?activeField:'all';
     const visible=q=>activeTags.has(q.tag||'기타')&&activeSubjects.has(q.subject||'미분류(공통)')&&(_af==='all'||(fieldMap[q.tag||'기타']||getAutoField(q.tag||'기타'))===_af);
-    const remain=bank.filter(q=>visible(q)&&(!q.my_status||q.my_status==='wrong'||(typeof isSRDue==='function'&&isSRDue(q)))).length;
-    const perDay=Math.max(1, Math.ceil(remain/dday));
+    const vBank=bank.filter(visible);
+    const total=vBank.length;
+    if(!total) return null;
+    const cumSolved=vBank.reduce((s,q)=>s+(q.solve_count||0),0); // 누적 풀이 횟수
+    const unsolved=vBank.filter(q=>!q.my_status).length;          // 한 번도 안 푼 문제
+    const reviewGoal=getReviewGoal();
+    const target=total*reviewGoal;                               // 목표 = 전체 × 회독
+    const remainToSolve=Math.max(0, target-cumSolved);
+    const perDay=Math.max(1, Math.ceil(remainToSolve/dday));      // 못한 날 누적↛·일수↓ → 다음날 자동 증가
     const solved = (_af==='all') ? (dailySolved||0) : (dailySolvedByField[_af]||0);
-    return {dday, perDay, solved, left:Math.max(0,perDay-solved), done:solved>=perDay};
+    const unsolvedPerDay=Math.max(1, Math.ceil(unsolved/dday));   // 처음 1회독 페이스
+    const progressPct=target>0?Math.min(100,Math.round(cumSolved/target*100)):0;
+    const curRound=Math.min(reviewGoal, Math.floor(cumSolved/total)+1);
+    return {dday, perDay, solved, left:Math.max(0,perDay-solved), done:solved>=perDay, reviewGoal, cumSolved, target, total, unsolved, unsolvedPerDay, progressPct, curRound, remainToSolve};
 }
 
 function renderTodayQuotaBar(){
@@ -12010,10 +12031,18 @@ function renderTodayQuotaBar(){
     if(!q){ el.style.display='none'; return; }
     el.style.display='block';
     const pct=Math.min(100, Math.round(q.solved/q.perDay*100));
+    const roundInfo = q.reviewGoal>1
+        ? `🔄 ${q.curRound}/${q.reviewGoal}회독 · 누적 ${q.cumSolved}/${q.target} (${q.progressPct}%)`
+        : `진도 ${q.cumSolved}/${q.total}문제 (${q.progressPct}%)`;
+    const unsolvedInfo = q.unsolved>0
+        ? `<div style="font-size:0.68em;color:var(--text-muted);margin-top:5px">📭 안 푼 ${q.unsolved}개 · 처음 다 풀려면 하루 <b>${q.unsolvedPerDay}</b>개</div>`
+        : `<div style="font-size:0.68em;color:var(--success);margin-top:5px">✅ 모든 문제를 한 번 이상 풀었어요!</div>`;
     if(q.done){
-        el.innerHTML=`<div style="background:var(--primary-light);border:1px solid var(--success);border-radius:12px;padding:9px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px">
-            <span style="font-size:0.82em;font-weight:800;color:var(--success)">🎉 오늘 목표 달성! (${q.solved}/${q.perDay}문제)</span>
-            <span style="font-size:0.72em;color:var(--text-muted);white-space:nowrap">D-${q.dday}</span></div>`;
+        el.innerHTML=`<div style="background:var(--primary-light);border:1px solid var(--success);border-radius:12px;padding:9px 12px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+                <span style="font-size:0.82em;font-weight:800;color:var(--success)">🎉 오늘 목표 달성! (${q.solved}/${q.perDay}문제)</span>
+                <span style="font-size:0.72em;color:var(--text-muted);white-space:nowrap">D-${q.dday}</span></div>
+            <div style="font-size:0.68em;color:var(--text-sub);margin-top:5px">${roundInfo}</div>${unsolvedInfo}</div>`;
     } else {
         el.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:9px 12px">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
@@ -12021,7 +12050,7 @@ function renderTodayQuotaBar(){
                 <span style="font-size:0.72em;color:var(--text-muted);white-space:nowrap">D-${q.dday}</span>
             </div>
             <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:var(--primary);border-radius:3px;transition:width 0.3s"></div></div>
-        </div>`;
+            <div style="font-size:0.68em;color:var(--text-sub);margin-top:5px">${roundInfo}</div>${unsolvedInfo}</div>`;
     }
 }
 
@@ -12042,14 +12071,19 @@ function renderPassStrategy(){
     let ddayHtml;
     if(examDate){
         const dday=Math.ceil((new Date(examDate+'T00:00:00Z')-new Date(todayStr+'T00:00:00Z'))/86400000);
-        const remain=vBank.filter(q=>!q.my_status||q.my_status==='wrong'||isSRDue(q)).length;
         if(dday>0){
-            const perDay=Math.ceil(remain/dday);
+            const _tq=getTodayQuota();
+            const perDay=_tq?_tq.perDay:Math.ceil(vBank.filter(q=>!q.my_status).length/dday);
+            const rg=getReviewGoal();
+            const reviewField=`🔄 <input type="number" min="1" max="20" value="${rg}" onchange="setReviewGoal(this.value)" style="width:40px;font-size:0.78em;padding:3px 4px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);text-align:center"> 회독`;
             ddayHtml=`<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:10px">
                 <div><div style="font-size:0.7em;color:var(--text-sub)">시험까지</div><div style="font-size:1.7em;font-weight:900;color:var(--primary);line-height:1.1">D-${dday}</div></div>
-                <div style="text-align:right"><div style="font-size:0.7em;color:var(--text-sub)">오늘 권장</div><div style="font-size:1.15em;font-weight:800;color:var(--text)">${perDay}문제</div><div style="font-size:0.64em;color:var(--text-muted)">남은 ${remain} ÷ ${dday}일</div></div>
+                <div style="text-align:right"><div style="font-size:0.7em;color:var(--text-sub)">오늘 권장</div><div style="font-size:1.15em;font-weight:800;color:var(--text)">${perDay}문제</div>${_tq?`<div style="font-size:0.64em;color:var(--text-muted)">목표 ${_tq.target}회 · 누적 ${_tq.cumSolved}</div>`:''}</div>
             </div>
-            <div style="margin-top:8px;text-align:right">${dateField}</div>`;
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px">
+                <span style="font-size:0.8em;color:var(--text-sub)">${reviewField}</span>
+                ${dateField}
+            </div>`;
         } else if(dday===0){
             ddayHtml=`<div style="text-align:center;padding:4px 0"><div style="font-size:1.4em;font-weight:900;color:var(--danger)">🎯 오늘이 시험일!</div><div style="font-size:0.8em;color:var(--text-sub);margin-top:2px">그동안 쌓은 실력 다 쏟아붓고 오세요 💪</div></div>
             <div style="margin-top:8px;text-align:right">${dateField}</div>`;
