@@ -2937,7 +2937,7 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
                         <span id="quizTag" class="tag-pill" style="display:none">태그</span>
                         <span id="quizSubject" class="subject-pill">과목</span>
                         <span id="quizDiffBadge" class="q-diff-badge" style="display:none"></span>
-                        <span id="modeStatusBadge" class="mode-pill" onclick="if(document.getElementById('modeStatusBadge').innerText.includes('플랜')) endPlanMode()" style="cursor:pointer"></span>
+                        <span id="modeStatusBadge" class="mode-pill" onclick="if(planModeActive) endPlanMode()" style="cursor:pointer"></span>
                         <div id="quizKeywords" class="cmeta-keywords" style="display:none"></div>
                         <!-- 기억강도 도트 (row2에서 이동) -->
                         <div class="mem-strength" id="memStrength" style="margin-left:6px">
@@ -3299,6 +3299,9 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
             <!-- 🎯 합격 전략 카드 (D-day · 합격예측 · 과락경고) -->
             <div id="passStrategyCard" class="pass-strategy-card" style="display:none"></div>
 
+            <!-- 📊 주간 학습 그래프 -->
+            <div id="weeklyChartCard" class="pass-strategy-card" style="display:none"></div>
+
             <!-- ④ 오늘 현황 카드 (스트릭 + 목표 + 통계 통합) -->
             <!-- 🎯 Smart Study Recommendation (v147) -->
             <div class="smart-rec" id="smartRecBox" style="display:none">
@@ -3520,6 +3523,12 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
                     <label style="font-size:0.87em;color:var(--text-sub);display:flex;align-items:center;gap:6px;cursor:pointer">
                         <input type="checkbox" id="reviewNotifToggle" onchange="toggleReviewNotif(this)" style="width:16px;height:16px;accent-color:var(--primary)">
                         🔔 복습 알림 <span style="font-size:0.8em;opacity:0.7">(앱 열 때 목표 미달 시)</span>
+                    </label>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;padding:4px 0">
+                    <label style="font-size:0.87em;color:var(--text-sub);display:flex;align-items:center;gap:6px;cursor:pointer">
+                        <input type="checkbox" id="darkAutoToggle" onchange="toggleDarkAuto(this)" style="width:16px;height:16px;accent-color:var(--primary)">
+                        🌗 자동 다크모드 <span style="font-size:0.8em;opacity:0.7">(저녁 7시~아침 7시)</span>
                     </label>
                 </div>
             </div>
@@ -4571,7 +4580,8 @@ let qTimerInterval = null, qTimerSeconds = 0;
 /* Auto-next */
 let autoNextEnabled = false;
 let autoNextTimeout = null, autoNextInterval = null;
-let planModeActive = false;  // 학습플랜 모드: 이미 푼 문제도 재도전 가능
+let planModeActive = false;
+let planBadgeText = null; // 플랜/코스 배지 텍스트 — updateUI가 매번 다시 그려도 유지  // 학습플랜 모드: 이미 푼 문제도 재도전 가능
 let searchScope = 'all';    // D: 검색 범위
 let qStartTime  = 0;        // E: 문제 시작 시각
 const AUTO_NEXT_DELAY = 2;
@@ -4827,6 +4837,10 @@ window.onload = async function() {
 
     // Ver.80 inits
     darkMode = localStorage.getItem('darkMode_v80') === 'true';
+    // 🌗 자동 다크모드: 켜져 있으면 시간(19시~7시)으로 결정 + 켜둔 동안에도 재평가(화면 복귀·매분)
+    if(localStorage.getItem('darkModeAuto')==='on'){ const _h=new Date().getHours(); darkMode=(_h>=19||_h<7); localStorage.setItem('darkMode_v80', String(darkMode)); }
+    document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible' && typeof applyAutoDark==='function') applyAutoDark(); });
+    setInterval(function(){ if(typeof applyAutoDark==='function') applyAutoDark(); }, 60000);
     interleaveMode = localStorage.getItem('interleaveMode_v80') === 'true';
     if(darkMode) { document.body.classList.add('dark-mode'); document.getElementById('darkToggleBtn').innerText='☀️'; }
     initFontSize();
@@ -5077,7 +5091,8 @@ function updateUI() {
     // V161: 필터/선택 상태 저장
     saveSessionState();
     const modeBadge = document.getElementById('modeStatusBadge');
-    if(currentFilter==='wrong'){ modeBadge.innerText='오답노트'; modeBadge.style.cssText='display:inline-block;background:var(--danger-light);color:var(--danger);padding:3px 7px;border-radius:7px;font-size:0.72em;font-weight:700'; }
+    if(planModeActive && planBadgeText){ modeBadge.innerText=planBadgeText; modeBadge.style.cssText='display:inline-block;background:var(--primary);color:white;padding:3px 8px;border-radius:7px;font-size:0.72em;font-weight:700;cursor:pointer'; }
+    else if(currentFilter==='wrong'){ modeBadge.innerText='오답노트'; modeBadge.style.cssText='display:inline-block;background:var(--danger-light);color:var(--danger);padding:3px 7px;border-radius:7px;font-size:0.72em;font-weight:700'; }
     else if(currentFilter==='retry'){ modeBadge.innerText='🔄 재도전'; modeBadge.style.cssText='display:inline-block;background:var(--danger);color:white;padding:3px 7px;border-radius:7px;font-size:0.72em;font-weight:700'; }
     else if(currentFilter==='unanswered'){ modeBadge.innerText='✏️ 안 푼 문제'; modeBadge.style.cssText='display:inline-block;background:#F0FDF4;color:#15803D;padding:3px 7px;border-radius:7px;font-size:0.72em;font-weight:700'; }
     else if(currentFilter==='unread'){ modeBadge.innerText='👁 안읽음'; modeBadge.style.cssText='display:inline-block;background:var(--primary-light);color:var(--primary);padding:3px 7px;border-radius:7px;font-size:0.72em;font-weight:700'; }
@@ -5571,6 +5586,7 @@ function handleAutoNextToggle() {
 function endPlanMode() {
     if(!planModeActive) return;
     planModeActive = false;
+    planBadgeText = null;
     const badge = document.getElementById('modeStatusBadge');
     if(badge) { badge.innerText = ''; badge.style.display = 'none'; }
     showToast('📋 학습플랜 모드 종료');
@@ -6335,6 +6351,9 @@ function handleGlobalKeydown(e) {
     if(['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) return;
     if(document.querySelector('.modal-overlay[style*="flex"]')) return;
     if(document.querySelector('.ios-confirm-overlay.show')) return;
+    // 단축키 도움말이 떠 있으면 퀴즈 키 차단 + Esc/Enter/?로 닫기
+    const _sh=document.getElementById('shortcutHelpOverlay');
+    if(_sh){ if(e.key==='Escape'||e.key==='?'||e.key==='Enter'){ e.preventDefault(); _sh.remove(); } return; }
     switch(e.key){
         case 'ArrowRight': moveIndex(1); break;
         case 'ArrowLeft':  moveIndex(-1); break;
@@ -6349,6 +6368,7 @@ function handleGlobalKeydown(e) {
         case '4': selectOptionByKeyboard(3); break;
         case 'b': case 'B': toggleBookmark(); break;
         case 'Escape': cancelAutoNext(); break;
+        case '?': if(typeof showShortcutHelp==='function') showShortcutHelp(); break;
     }
 }
 function selectOptionByKeyboard(idx) {
@@ -7849,6 +7869,7 @@ function startPlan(type) {
         // 배지 표시
         const planLabels = {review:'📅 복습', wrong:'❌ 오답 재도전', unread:'👁 새 문제', weak:'⚠️ 취약 과목'};
         const badge = document.getElementById('modeStatusBadge');
+        planBadgeText = (planLabels[type]||'📋 플랜') + ' ' + filteredIndices.length + '문제';
         if(badge) {
             badge.innerText = (planLabels[type]||'📋 플랜') + ' ' + filteredIndices.length + '문제';
             badge.style.cssText = 'display:inline-block;background:var(--primary);color:white;padding:3px 8px;border-radius:7px;font-size:0.72em;font-weight:700;cursor:pointer';
@@ -7938,6 +7959,7 @@ function switchSettingsTab(tab) {
     });
     if(tab === 'data') { renderWorkbookManager(); renderDataSafety(); }
     if(tab === 'study') renderLearningModes();
+    if(tab === 'stats') { if(typeof renderPassStrategy==='function') renderPassStrategy(); if(typeof renderWeeklyChart==='function') renderWeeklyChart(); }
 }
 
 
@@ -8444,7 +8466,7 @@ function initFontSize() {
     if(slider) slider.value = saved;
     applyFontSize(saved);
 }
-function toggleDarkMode() {
+function toggleDarkMode(fromAuto) {
     darkMode = !darkMode;
     document.body.classList.toggle('dark-mode', darkMode);
     const btn = document.getElementById('darkToggleBtn');
@@ -8452,6 +8474,19 @@ function toggleDarkMode() {
     const modeBtn = document.getElementById('darkModeBtn');
     if(modeBtn) modeBtn.querySelector('.s-btn-icon').innerText = darkMode ? '☀️' : '🌙';
     localStorage.setItem('darkMode_v80', darkMode);
+    // 사용자가 직접 토글하면 자동 다크모드 해제 (자동 전환과 싸우지 않게)
+    if(!fromAuto && localStorage.getItem('darkModeAuto')==='on'){
+        localStorage.setItem('darkModeAuto','off');
+        const da=document.getElementById('darkAutoToggle'); if(da) da.checked=false;
+        showToast('수동 변경 — 자동 다크모드 해제');
+    }
+}
+
+// 자동 다크모드 재평가 (부팅·화면 복귀·매분)
+function applyAutoDark(){
+    if(localStorage.getItem('darkModeAuto')!=='on') return;
+    const h=new Date().getHours(); const want=(h>=19||h<7);
+    if(want!==darkMode) toggleDarkMode(true);
 }
 
 /* ============================================================
@@ -11975,6 +12010,7 @@ function checkReviewReminder(){
 }
 window.addEventListener('load', function(){
     var t=document.getElementById('reviewNotifToggle'); if(t) t.checked=localStorage.getItem('reviewNotif')==='on';
+    var da=document.getElementById('darkAutoToggle'); if(da) da.checked=localStorage.getItem('darkModeAuto')==='on';
     setTimeout(function(){ if(typeof checkReviewReminder==='function') checkReviewReminder(); }, 3500);
 });
 
@@ -12021,7 +12057,27 @@ function getTodayQuota(){
     const unsolvedPerDay=Math.max(1, Math.ceil(unsolved/dday));   // 처음 1회독 페이스
     const progressPct=target>0?Math.min(100,Math.round(cumSolved/target*100)):0;
     const curRound=Math.min(reviewGoal, Math.floor(cumSolved/total)+1);
-    return {dday, perDay, solved, left:Math.max(0,perDay-solved), done:solved>=perDay, reviewGoal, cumSolved, target, total, unsolved, unsolvedPerDay, progressPct, curRound, remainToSolve};
+    // ── 계획 기준선(baseline): 밀림 계산용 — 과목/태그 필터와 무관한 '분야 전체' 스코프로 고정
+    //    (필터 토글로 기준선이 리셋되면 밀림·예상회독이 무력화되므로 planBank 사용)
+    const planBank=bank.filter(q=>(_af==='all'||(fieldMap[q.tag||'기타']||getAutoField(q.tag||'기타'))===_af));
+    const planTotal=planBank.length;
+    const planCum=planBank.reduce((s,q)=>s+(q.solve_count||0),0);
+    const planPerDay=Math.max(1, Math.ceil(Math.max(0, planTotal*reviewGoal-planCum)/dday));
+    const baseKey='planBase_'+(_af==='all'?'all':_af);
+    let base=null; try{ base=JSON.parse(localStorage.getItem(baseKey)||'null'); }catch(e){}
+    if(!base || base.examDate!==examDate || base.goal!==reviewGoal || Math.abs((base.total||0)-planTotal)>planTotal*0.1){
+        base={date:todayStr, cum:planCum, examDate:examDate, goal:reviewGoal, total:planTotal, perDay:planPerDay};
+        localStorage.setItem(baseKey, JSON.stringify(base));
+    }
+    const daysSinceBase=Math.max(0, Math.round((new Date(todayStr+'T00:00:00Z')-new Date(base.date+'T00:00:00Z'))/86400000));
+    const expectedThroughYesterday=base.cum + (base.perDay||planPerDay)*daysSinceBase;
+    const actualThroughYesterday=planCum - solved;
+    const deficit=daysSinceBase>0 ? Math.max(0, expectedThroughYesterday-actualThroughYesterday) : 0;
+    // ── 예상 회독: 계획 시작 후 실제 페이스 → 시험일까지 투영 (분야 스코프) ──
+    const daysObserved=daysSinceBase+1;
+    const pace=(planCum-base.cum)/daysObserved;
+    const projectedRounds=planTotal>0 ? (planCum + pace*dday)/planTotal : 0;
+    return {dday, perDay, solved, left:Math.max(0,perDay-solved), done:solved>=perDay, reviewGoal, cumSolved, target, total, unsolved, unsolvedPerDay, progressPct, curRound, remainToSolve, deficit, pace, projectedRounds, daysObserved};
 }
 
 function renderTodayQuotaBar(){
@@ -12031,27 +12087,113 @@ function renderTodayQuotaBar(){
     if(!q){ el.style.display='none'; return; }
     el.style.display='block';
     const pct=Math.min(100, Math.round(q.solved/q.perDay*100));
+    // 회독 단계 색: 1회독 파랑 → 2회독 초록 → 3회독+ 금색
+    const roundColor = q.curRound>=3 ? '#F59E0B' : q.curRound===2 ? 'var(--success)' : 'var(--primary)';
     const roundInfo = q.reviewGoal>1
-        ? `🔄 ${q.curRound}/${q.reviewGoal}회독 · 누적 ${q.cumSolved}/${q.target} (${q.progressPct}%)`
+        ? `<span style="color:${roundColor};font-weight:800">🔄 ${q.curRound}/${q.reviewGoal}회독</span> · 누적 ${q.cumSolved}/${q.target} (${q.progressPct}%)`
         : `진도 ${q.cumSolved}/${q.total}문제 (${q.progressPct}%)`;
     const unsolvedInfo = q.unsolved>0
         ? `<div style="font-size:0.68em;color:var(--text-muted);margin-top:5px">📭 안 푼 ${q.unsolved}개 · 처음 다 풀려면 하루 <b>${q.unsolvedPerDay}</b>개</div>`
         : `<div style="font-size:0.68em;color:var(--success);margin-top:5px">✅ 모든 문제를 한 번 이상 풀었어요!</div>`;
+    // 🔴 밀림 경고 (계획 기준선 대비 누적 부족분)
+    const deficitLine = q.deficit>=1
+        ? `<div style="font-size:0.7em;color:var(--danger);font-weight:700;margin-top:5px">🔴 계획보다 ${q.deficit}문제 밀렸어요 — 오늘 권장량에 반영했어요</div>` : '';
+    // 🔮 예상 회독 (이틀 이상 관찰 후 표시)
+    let projLine='';
+    if(q.daysObserved>=2 && q.pace>0){
+        const pr=Math.round(q.projectedRounds*10)/10;
+        const ok=pr>=q.reviewGoal;
+        projLine=`<div style="font-size:0.7em;color:${ok?'var(--success)':'var(--warning)'};margin-top:4px">🔮 이 페이스면 시험까지 <b>~${pr}회독</b>${ok?' — 목표 달성 가능!':` (목표 ${q.reviewGoal}회독)`}</div>`;
+    }
+    const courseBtn=`<button onclick="startTodayCourse()" style="width:100%;margin-top:8px;padding:9px;background:${q.done?'var(--bg)':'var(--primary)'};color:${q.done?'var(--text-sub)':'#fff'};border:${q.done?'1.5px solid var(--border)':'none'};border-radius:10px;font-size:0.84em;font-weight:800;cursor:pointer">${q.done?'➕ 추가 학습 (한 번 더)':'▶ 오늘 분량 시작 — 복습→오답→새문제'}</button>`;
     if(q.done){
         el.innerHTML=`<div style="background:var(--primary-light);border:1px solid var(--success);border-radius:12px;padding:9px 12px">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
                 <span style="font-size:0.82em;font-weight:800;color:var(--success)">🎉 오늘 목표 달성! (${q.solved}/${q.perDay}문제)</span>
                 <span style="font-size:0.72em;color:var(--text-muted);white-space:nowrap">D-${q.dday}</span></div>
-            <div style="font-size:0.68em;color:var(--text-sub);margin-top:5px">${roundInfo}</div>${unsolvedInfo}</div>`;
+            <div style="font-size:0.68em;color:var(--text-sub);margin-top:5px">${roundInfo}</div>${unsolvedInfo}${projLine}${courseBtn}</div>`;
     } else {
         el.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:9px 12px">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
                 <span style="font-size:0.8em;font-weight:700;color:var(--text)">🎯 오늘 <b style="color:var(--primary)">${q.perDay}</b>문제 · ${q.solved} 완료 · <b style="color:var(--danger)">${q.left}문제 남음</b></span>
                 <span style="font-size:0.72em;color:var(--text-muted);white-space:nowrap">D-${q.dday}</span>
             </div>
-            <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:var(--primary);border-radius:3px;transition:width 0.3s"></div></div>
-            <div style="font-size:0.68em;color:var(--text-sub);margin-top:5px">${roundInfo}</div>${unsolvedInfo}</div>`;
+            <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${roundColor};border-radius:3px;transition:width 0.3s"></div></div>
+            <div style="font-size:0.68em;color:var(--text-sub);margin-top:5px">${roundInfo}</div>${deficitLine}${unsolvedInfo}${projLine}${courseBtn}</div>`;
     }
+}
+
+// ── ▶ 오늘의 코스: 복습→오답(취약과목 우선)→새문제 순으로 오늘 할당량 자동 구성 ──
+function startTodayCourse(){
+    const q=getTodayQuota();
+    if(!q){ showToast('시험일을 먼저 설정해주세요 (현황 탭 🎯 합격 현황)'); return; }
+    const _af=(typeof activeField!=='undefined')?activeField:'all';
+    const visible=qq=>activeTags.has(qq.tag||'기타')&&activeSubjects.has(qq.subject||'미분류(공통)')&&(_af==='all'||(fieldMap[qq.tag||'기타']||getAutoField(qq.tag||'기타'))===_af);
+    const n=q.left>0?q.left:q.perDay;
+    // 과목별 정답률 (오답을 취약 과목부터)
+    const subjAcc={};
+    bank.forEach(qq=>{ if(!visible(qq)||!qq.my_status) return; const s=qq.subject||'미분류(공통)'; if(!subjAcc[s])subjAcc[s]={c:0,t:0}; subjAcc[s].t++; if(qq.my_status==='correct')subjAcc[s].c++; });
+    const accOf=qq=>{ const s=subjAcc[qq.subject||'미분류(공통)']; return s&&s.t>0?s.c/s.t:1; };
+    const picked=[], seen=new Set();
+    const push=i=>{ if(!seen.has(i)&&picked.length<n){ seen.add(i); picked.push(i); } };
+    bank.forEach((qq,i)=>{ if(visible(qq)&&typeof isSRDue==='function'&&isSRDue(qq)) push(i); });                 // ① 복습 due
+    const wrongs=[]; bank.forEach((qq,i)=>{ if(visible(qq)&&qq.my_status==='wrong') wrongs.push(i); });
+    wrongs.sort((a,b)=>accOf(bank[a])-accOf(bank[b])); wrongs.forEach(push);                                      // ② 오답 (취약 우선)
+    bank.forEach((qq,i)=>{ if(visible(qq)&&!qq.my_status) push(i); });                                            // ③ 새 문제
+    if(picked.length<n){ const rest=[]; bank.forEach((qq,i)=>{ if(visible(qq)&&!seen.has(i)) rest.push(i); });
+        rest.sort((a,b)=>(bank[a].solve_count||0)-(bank[b].solve_count||0)); rest.forEach(push); }                // ④ 부족하면 회독(덜 푼 순)
+    if(!picked.length){ showToast('출제할 문제가 없습니다. 범위를 확인해주세요.'); return; }
+    planModeActive=true;
+    planBadgeText='▶ 오늘의 코스 '+picked.length+'문제'; // updateUI가 배지를 유지·렌더 (탭하면 종료)
+    picked.forEach(i=>{ const qq=bank[i]; if(qq.my_status){ qq.prev_status=qq.my_status; qq.prev_ans=qq.my_ans; qq.my_status=null; qq.my_ans=null; } });
+    filteredIndices=picked; currentIndex=0; isShuffleMode=false;
+    saveData(); updateUI(); if(typeof updateBadges==='function') updateBadges();
+    if(typeof closeSettingsSheet==='function') closeSettingsSheet();
+    showToast('▶ 오늘의 코스 '+picked.length+'문제 — 복습→오답→새문제 순!','success');
+    if(typeof iosScrollTop==='function') iosScrollTop();
+}
+
+// ── 📊 주간 학습 그래프 (현황 탭) ──
+function renderWeeklyChart(){
+    const el=document.getElementById('weeklyChartCard'); if(!el) return;
+    const t=new Date(todayStr+'T00:00:00Z'); const days=[];
+    for(let i=6;i>=0;i--){ const d=new Date(t); d.setUTCDate(t.getUTCDate()-i); const ds=d.toISOString().slice(0,10); days.push({ds, dow:'일월화수목금토'[d.getUTCDay()], cnt:heatmapData[ds]||0}); }
+    const max=Math.max(1,...days.map(d=>d.cnt));
+    const total7=days.reduce((s,d)=>s+d.cnt,0);
+    if(total7===0 && !(accuracyHistory2&&accuracyHistory2.length)){ el.style.display='none'; return; }
+    el.style.display='block';
+    const bars=days.map(d=>{ const h=Math.max(2,Math.round(d.cnt/max*44)); const isT=d.ds===todayStr;
+        return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px;height:100%">
+            <span style="font-size:0.62em;color:var(--text-sub);font-weight:700">${d.cnt||''}</span>
+            <div style="width:68%;height:${h}px;background:${isT?'var(--primary)':d.cnt>0?'var(--success)':'var(--border)'};border-radius:3px"></div>
+            <span style="font-size:0.62em;color:${isT?'var(--primary)':'var(--text-muted)'};font-weight:${isT?'800':'500'}">${d.dow}</span></div>`; }).join('');
+    let accLine='';
+    try{ const hist=(accuracyHistory2||[]).slice(-7);
+        if(hist.length>=2){ const d=hist[hist.length-1].acc-hist[0].acc;
+            const tr=d>0?`📈 +${d}%p`:d<0?`📉 ${d}%p`:'➡️ 보합';
+            accLine=`<div style="font-size:0.72em;color:var(--text-sub);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">정답률 추세(최근 ${hist.length}회): <b>${hist[0].acc}% → ${hist[hist.length-1].acc}%</b> ${tr}</div>`; } }catch(e){}
+    el.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px"><span style="font-size:0.84em;font-weight:800;color:var(--text)">📊 최근 7일 학습</span><span style="font-size:0.72em;color:var(--text-muted)">총 ${total7}문제</span></div>
+        <div style="display:flex;align-items:flex-end;gap:4px;height:74px">${bars}</div>${accLine}`;
+}
+
+// ── ⌨️ 단축키 도움말 ('?' 키) ──
+function showShortcutHelp(){
+    const ex=document.getElementById('shortcutHelpOverlay'); if(ex){ ex.remove(); return; }
+    const o=document.createElement('div'); o.id='shortcutHelpOverlay';
+    o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:999998;display:flex;align-items:center;justify-content:center;padding:20px';
+    o.onclick=()=>o.remove();
+    o.innerHTML=`<div style="background:var(--surface);border-radius:18px;padding:20px 22px;max-width:300px;width:100%">
+        <div style="font-weight:800;margin-bottom:12px;color:var(--text)">⌨️ 키보드 단축키</div>
+        <div style="font-size:0.85em;color:var(--text-sub);line-height:2"><b>← →</b> 이전/다음 문제<br><b>1 ~ 4</b> 보기 선택<br><b>Enter / Space</b> 정답 확인 · 카드 뒤집기<br><b>B</b> 북마크<br><b>Esc</b> 자동 이동 취소<br><b>?</b> 이 도움말</div>
+        <div style="font-size:0.72em;color:var(--text-muted);margin-top:10px;text-align:center">아무 곳이나 탭하면 닫혀요</div></div>`;
+    document.body.appendChild(o);
+}
+
+// ── 🌗 자동 다크모드 (19시~7시) ──
+function toggleDarkAuto(cb){
+    localStorage.setItem('darkModeAuto', cb.checked?'on':'off');
+    if(cb.checked){ const h=new Date().getHours(); const want=(h>=19||h<7); if(want!==darkMode) toggleDarkMode(true); showToast('🌗 자동 다크모드 ON — 저녁 7시~아침 7시 어둡게'); }
+    else showToast('자동 다크모드 OFF');
 }
 
 function renderPassStrategy(){
