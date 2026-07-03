@@ -3222,6 +3222,8 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
                 <span style="font-size:1.1em">🎓</span>
                 <h2 class="settings-header-title">합격마스터 v150</h2>
                 <span class="settings-badge" id="aiStatusBadge">AI</span>
+                <span class="settings-badge" id="hmProBadge" style="display:none;background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff">💎 PRO</span>
+                <span class="hm-free-only" onclick="event.stopPropagation();openPaywall('')" style="cursor:pointer;font-size:0.72em;font-weight:800;color:#f59e0b;border:1.3px solid #f59e0b;border-radius:20px;padding:2px 9px;margin-left:2px">💎 업그레이드</span>
             </div>
             <div class="settings-header-right">
                 <span class="toggle-icon" id="settingsToggleIcon">메뉴 ▼</span>
@@ -5520,6 +5522,7 @@ function toggleShuffle() {
 
 function toggleAITutor() {
     const apiKey = localStorage.getItem('claudeApiKey');
+    if(!isAIMode && !requirePro('AI 해설·오답분석')) return;  /* Model A 게이트 */
     isAIMode=!isAIMode;
     document.getElementById('btnAiTutor').classList.toggle('active', isAIMode);
     document.getElementById('aiStatusBadge').style.display=isAIMode?'inline-block':'none';
@@ -9445,6 +9448,8 @@ function applyMockTotalDistribute() {
 }
 
 function startMockExam() {
+    if(!hmCanMock()){ openPaywall('무제한 모의고사'); return; }  /* Model A: 무료 하루 1회 */
+    hmRecordMock();
     const mockWrongOnly=document.getElementById('mockMockWrongOnly')?.checked||false;
     const mockUnansweredOnly=document.getElementById('mockMockUnansweredOnly')?.checked||false;
     const bookmarkOnly=document.getElementById('mockBookmarkOnly')?.checked||false;
@@ -12745,6 +12750,182 @@ const _origRenderMiniDashboard = typeof renderMiniDashboard === 'function' ? ren
   window.drillBack=function(){ ddStep=1; ddField=null; renderDrill(); };
   window.addEventListener('load',()=>{ setTimeout(()=>{ try{ if(typeof bank!=='undefined'&&bank.length) showDrilldown(); }catch(e){} },700); });
 })();
+</script>
+
+<div id="hmPaywallModal" class="modal-overlay" onclick="if(event.target===this)closePaywall()" style="display:none">
+    <div class="modal-box" style="max-width:440px">
+        <div class="modal-header">
+            <h3 class="modal-title">💎 합격마스터 PRO</h3>
+            <button class="modal-close" onclick="closePaywall()">닫기</button>
+        </div>
+        <div id="hmPaywallCtx" style="text-align:center;font-weight:800;font-size:1.05em;margin:6px 0 12px;color:var(--primary)">PRO로 더 빠르게 합격하세요 💎</div>
+        <div style="font-size:0.8em;color:var(--text-sub);text-align:center;margin-bottom:14px;line-height:1.6">기출문제 풀이는 <b>계속 무료</b>예요.<br>아래 기능만 PRO로 열려요.</div>
+        <div id="hmFeatureList" style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px"></div>
+        <button onclick="hmBuyPro()" style="width:100%;padding:14px;background:var(--primary);color:#fff;border:none;border-radius:12px;font-size:1em;font-weight:800;cursor:pointer">PRO 시작하기 · <span id="hmPriceLabel">월 ₩3,900</span></button>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+            <div style="font-size:0.78em;color:var(--text-sub);margin-bottom:7px">이미 구매하셨나요? 라이선스 키 입력</div>
+            <div style="display:flex;gap:7px">
+                <input id="hmKeyInput" type="text" placeholder="HMPRO-XXXXX-XXXX" autocomplete="off" style="flex:1;padding:11px;border:1.5px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text);font-size:0.85em">
+                <button onclick="hmSubmitKey()" style="padding:11px 16px;background:var(--success);color:#fff;border:none;border-radius:10px;font-weight:700;cursor:pointer;white-space:nowrap">활성화</button>
+            </div>
+            <div id="hmLicenseStatus" style="font-size:0.74em;color:var(--text-muted);margin-top:8px;text-align:center"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+/* ============================================================
+   💎 합격마스터 PRO — 기능 게이팅 / 라이선스  (Model A: 기출 무료, 기능 유료)
+   결제 추상화 — 오프라인 체크섬 키 즉시작동 + Gumroad/Lemon Squeezy 라이선스 API 훅(이지님 계정 후)
+   ⚠️ 클라이언트 라이선스는 '정직한 사용자' 보호 수준 — 강한 보호는 서버 검증 필요
+============================================================ */
+const HM_PRO = {
+    PRICE_LABEL: '월 ₩3,900',
+    CHECKOUT_URL: '',           // 이지님: Lemon Squeezy 결제링크 (Product→Share→Checkout URL). 비면 "준비중"
+    LS: { enabled: false },     // 이지님: LS 스토어 연결 후 enabled:true → 라이선스 키 API 검증 활성화
+    KEY_PREFIX: 'HMPRO-',
+    KEY_SALT: 'hapgyeok-master-pro-2026',
+    FREE_MOCK_PER_DAY: 1,       // 무료: 하루 모의고사 1회
+    FEATURES: [
+        ['🤖','AI 해설·오답분석','틀린 이유를 짚어주는 실시간 AI 튜터'],
+        ['📝','무제한 모의고사','실전 모드 무제한 (무료는 하루 1회)'],
+        ['🚀','앞으로의 모든 PRO 신기능','합격예측·리포트 등 업데이트 포함'],
+    ],
+        ['📝','무제한 모의고사','실전 모드 · 과목별 배분 (무료는 하루 1회)'],
+        ['🎯','합격 예측','합격선 대비 내 위치 · 합격 확률 추세'],
+        ['☁️','클라우드 동기화','폰 ↔ PC 자동 — 어디서든 이어서'],
+        ['🚫','광고 없음','깔끔한 학습에 집중'],
+    ],
+};
+let hmLicense = (function(){ try{ return JSON.parse(localStorage.getItem('hmLicense_v1')||'null'); }catch(e){ return null; } })();
+let isPro = !!(hmLicense && hmLicense.pro);
+
+function _hmHash(s){
+    let h = 2166136261;
+    for(let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return (h>>>0).toString(36).toUpperCase().padStart(7,'0').slice(0,7);
+}
+function _hmValidateKey(key){
+    key = (key||'').trim().toUpperCase();
+    if(!key.startsWith(HM_PRO.KEY_PREFIX)) return false;
+    const parts = key.slice(HM_PRO.KEY_PREFIX.length).split('-');
+    if(parts.length < 2) return false;
+    const checksum = parts.pop();
+    const payload = parts.join('-');
+    if(payload.length < 4) return false;
+    return _hmHash(payload + HM_PRO.KEY_SALT) === checksum;
+}
+// 이지님용 키 생성: 브라우저 콘솔에서 hmGenerateKey('BUYER01') 실행 → 판매/배포용 키
+function hmGenerateKey(payload){
+    payload = (payload||('U'+Date.now().toString(36))).toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,10);
+    return HM_PRO.KEY_PREFIX + payload + '-' + _hmHash(payload + HM_PRO.KEY_SALT);
+}
+function hmSaveLicense(){
+    try{ localStorage.setItem('hmLicense_v1', JSON.stringify(hmLicense)); }catch(e){}
+    isPro = !!(hmLicense && hmLicense.pro);
+}
+async function activateLicense(key){
+    key = (key||'').trim();
+    if(!key) return { ok:false, msg:'라이선스 키를 입력해주세요.' };
+    // 1) Lemon Squeezy 라이선스 API (스토어 연결 시) — 라이선스 키 자체로 인증, 시크릿 불필요(클라이언트 안전)
+    if(HM_PRO.LS && HM_PRO.LS.enabled){
+        const r = await _hmLSActivate(key);
+        if(r.ok){
+            hmLicense = { pro:true, key:key.trim(), plan:'lemonsqueezy', instanceId:r.instanceId, activatedAt:Date.now() };
+            hmSaveLicense(); hmReflectProUI();
+            return { ok:true, msg:'🎉 PRO 활성화 완료! 모든 기능이 열렸어요.' };
+        }
+        // LS 실패 → 오프라인/수동 키도 시도(베타·지인 키 허용)
+    }
+    // 2) 오프라인 체크섬 키 (백엔드 없이 즉시 발급 — 초기 수동/베타 판매)
+    if(_hmValidateKey(key)){
+        hmLicense = { pro:true, key:key.trim().toUpperCase(), plan:'standard', activatedAt:Date.now() };
+        hmSaveLicense(); hmReflectProUI();
+        return { ok:true, msg:'🎉 PRO 활성화 완료! 모든 기능이 열렸어요.' };
+    }
+    return { ok:false, msg:'유효하지 않은 키예요. 구매 영수증의 키를 다시 확인해주세요.' };
+}
+// ── Lemon Squeezy License API (브라우저 직접 호출 — 라이선스 키로 인증) ──
+async function _hmLSActivate(key){
+    try{
+        const res = await fetch('https://api.lemonsqueezy.com/v1/licenses/activate', {
+            method:'POST', headers:{ 'Accept':'application/json','Content-Type':'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ license_key:key, instance_name:'hapgyeok-'+((navigator.platform||'web').slice(0,12)) })
+        });
+        const d = await res.json();
+        if(d && d.activated && d.instance) return { ok:true, instanceId:d.instance.id };
+        return { ok:false, msg:(d && d.error) || '활성화 실패' };
+    }catch(e){ return { ok:false, msg:'네트워크 오류' }; }
+}
+async function _hmLSValidate(key, instanceId){
+    try{
+        const res = await fetch('https://api.lemonsqueezy.com/v1/licenses/validate', {
+            method:'POST', headers:{ 'Accept':'application/json','Content-Type':'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ license_key:key, instance_id:instanceId })
+        });
+        const d = await res.json();
+        return !!(d && d.valid && d.license_key && d.license_key.status==='active');
+    }catch(e){ return true; }  // 오프라인/네트워크 오류 시 PRO 유지(관대)
+}
+// 앱 시작 시 LS 구독 상태 재확인 (만료·취소 반영)
+async function hmRevalidate(){
+    if(hmLicense && hmLicense.plan==='lemonsqueezy' && hmLicense.instanceId && HM_PRO.LS && HM_PRO.LS.enabled){
+        const ok = await _hmLSValidate(hmLicense.key, hmLicense.instanceId);
+        if(!ok) deactivatePro();
+    }
+}
+function deactivatePro(){ hmLicense=null; hmSaveLicense(); hmReflectProUI(); if(typeof showToast==='function') showToast('PRO를 해제했어요.'); }
+
+// 게이트: PRO 필요. true=통과, false=페이월
+function requirePro(featureName){ if(isPro) return true; openPaywall(featureName||''); return false; }
+// 무료 모의고사 일일 제한
+function hmCanMock(){
+    if(isPro) return true;
+    const today=(new Date()).toISOString().slice(0,10);
+    let rec; try{ rec=JSON.parse(localStorage.getItem('hmMockQuota_v1')||'{}'); }catch(e){ rec={}; }
+    return !(rec.date===today && (rec.count||0) >= HM_PRO.FREE_MOCK_PER_DAY);
+}
+function hmRecordMock(){
+    if(isPro) return;
+    const today=(new Date()).toISOString().slice(0,10);
+    let rec; try{ rec=JSON.parse(localStorage.getItem('hmMockQuota_v1')||'{}'); }catch(e){ rec={}; }
+    if(rec.date!==today) rec={date:today,count:0};
+    rec.count=(rec.count||0)+1;
+    localStorage.setItem('hmMockQuota_v1', JSON.stringify(rec));
+}
+function hmReflectProUI(){
+    document.querySelectorAll('.hm-pro-only').forEach(el=>{ el.style.display = isPro?'':'none'; });
+    document.querySelectorAll('.hm-free-only').forEach(el=>{ el.style.display = isPro?'none':''; });
+    const badge=document.getElementById('hmProBadge'); if(badge) badge.style.display = isPro?'inline-flex':'none';
+    const st=document.getElementById('hmLicenseStatus');
+    if(st) st.innerHTML = isPro ? '💎 <b>PRO</b> 활성화됨' : '무료 플랜';
+    try{ if(typeof renderPassStrategy==='function') renderPassStrategy(); }catch(e){}
+}
+function openPaywall(feature){
+    const m=document.getElementById('hmPaywallModal'); if(!m) return;
+    const c=document.getElementById('hmPaywallCtx');
+    if(c) c.textContent = feature ? (feature+' — PRO 기능이에요 💎') : 'PRO로 더 빠르게 합격하세요 💎';
+    const fl=document.getElementById('hmFeatureList');
+    if(fl && !fl.dataset.built){
+        fl.innerHTML = HM_PRO.FEATURES.map(f=>`<div style="display:flex;gap:10px;align-items:flex-start"><div style="font-size:1.15em;line-height:1.3">${f[0]}</div><div><div style="font-weight:700;font-size:0.88em">${f[1]}</div><div style="font-size:0.75em;color:var(--text-sub)">${f[2]}</div></div></div>`).join('');
+        fl.dataset.built='1';
+    }
+    const pl=document.getElementById('hmPriceLabel'); if(pl) pl.textContent=HM_PRO.PRICE_LABEL;
+    m.style.display='flex';
+}
+function closePaywall(){ const m=document.getElementById('hmPaywallModal'); if(m) m.style.display='none'; }
+function hmBuyPro(){
+    if(HM_PRO.CHECKOUT_URL){ window.open(HM_PRO.CHECKOUT_URL,'_blank'); }
+    else if(typeof showToast==='function'){ showToast('💳 결제가 곧 열려요! 키가 있으면 아래에 입력해 주세요.','warning'); }
+}
+async function hmSubmitKey(){
+    const inp=document.getElementById('hmKeyInput');
+    const r=await activateLicense(inp?inp.value:'');
+    if(typeof showToast==='function') showToast(r.msg, r.ok?'success':'warning');
+    if(r.ok && inp){ inp.value=''; closePaywall(); }
+}
+
+try{ hmReflectProUI(); }catch(e){}
 </script>
 </body>
 </html>
