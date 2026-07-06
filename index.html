@@ -3619,14 +3619,14 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
             <!-- ⑧ Claude API 설정 -->
             <hr class="section-divider">
             <div style="margin-bottom:12px">
-                <div class="section-label">🤖 Claude AI 설정</div>
+                <div class="section-label">🤖 Gemini AI 설정</div>
                 <div style="background:var(--primary-light);border-radius:12px;padding:12px;margin-bottom:8px">
-                    <div style="font-size:0.82em;color:var(--primary);font-weight:700;margin-bottom:6px">Anthropic API 키를 입력하면 AI 튜터가 실시간 해설을 제공합니다.</div>
-                    <div style="font-size:0.78em;color:var(--text-sub);margin-bottom:8px">키는 이 기기에만 저장됩니다. <a href="https://console.anthropic.com" target="_blank" style="color:var(--primary)">console.anthropic.com</a>에서 발급</div>
+                    <div style="font-size:0.82em;color:var(--primary);font-weight:700;margin-bottom:6px">Google Gemini API 키를 입력하면 AI 튜터가 실시간 해설을 제공합니다.</div>
+                    <div style="font-size:0.78em;color:var(--text-sub);margin-bottom:8px">키는 이 기기에만 저장됩니다(서버 전송 없음). <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--primary)">aistudio.google.com/apikey</a>에서 무료 발급</div>
                     <div style="display:flex;gap:6px;align-items:center">
-                        <input type="password" id="claudeApiKeyInput" placeholder="sk-ant-..." 
+                        <input type="password" id="geminiApiKeyInput" placeholder="AIza..." 
                             style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:10px;font-size:0.85em;background:var(--surface);color:var(--text);outline:none">
-                        <button onclick="saveClaudeApiKey()" 
+                        <button onclick="saveGeminiApiKey()" 
                             style="padding:8px 14px;background:var(--primary);color:white;border:none;border-radius:10px;font-size:0.85em;font-weight:700;cursor:pointer;white-space:nowrap">저장</button>
                     </div>
                     <div id="apiKeyStatus" style="font-size:0.78em;margin-top:6px;color:var(--text-muted)"></div>
@@ -5521,7 +5521,7 @@ function toggleShuffle() {
 }
 
 function toggleAITutor() {
-    const apiKey = localStorage.getItem('claudeApiKey');
+    const apiKey = localStorage.getItem('geminiApiKey');
     if(!isAIMode && !requirePro('AI 해설·오답분석')) return;  /* Model A 게이트 */
     isAIMode=!isAIMode;
     document.getElementById('btnAiTutor').classList.toggle('active', isAIMode);
@@ -5539,12 +5539,12 @@ function toggleAITutor() {
 }
 
 // ====== Claude AI 기능 ======
-function saveClaudeApiKey() {
-    const input = document.getElementById('claudeApiKeyInput');
+function saveGeminiApiKey() {
+    const input = document.getElementById('geminiApiKeyInput');
     const key = input.value.trim();
     if(!key) { showToast('API 키를 입력해주세요!'); return; }
-    if(!key.startsWith('sk-ant-')) { showToast('⚠️ 올바른 Anthropic API 키 형식이 아닙니다.', 'warning'); return; }
-    localStorage.setItem('claudeApiKey', key);
+    if(!key.startsWith('AIza')) { showToast('⚠️ 올바른 Google API 키 형식이 아닙니다. (AIza로 시작)', 'warning'); return; }
+    localStorage.setItem('geminiApiKey', key);
     input.value = '';
     document.getElementById('apiKeyStatus').innerHTML = '✅ API 키가 저장되었습니다.';
     document.getElementById('apiKeyStatus').style.color = 'var(--success)';
@@ -5561,12 +5561,37 @@ function handleAutoAiToggle() {
     showToast(enabled ? '🔬 오답 시 자동 AI 해설 ON' : '🔬 오답 시 자동 AI 해설 OFF');
 }
 
-// ====== Claude AI 기능 (Lite: 비활성화) ======
-async function callClaudeAI() { return null; }
+// ====== Gemini AI 기능 (PRO 전용 — 사용자 Google Gemini 키 직접 호출) ======
+async function callGeminiAI(q) {
+    const apiKey = localStorage.getItem('geminiApiKey');
+    if(!apiKey || !q) return null;
+    const prompt = `당신은 국가기술자격(산업안전기사 등) 학습을 돕는 친절한 한국어 튜터입니다.\n아래 문제의 정답이 왜 맞는지, 학생이 헷갈리기 쉬운 함정은 무엇인지 3~4문장으로 쉽게 설명하고, 마지막 줄에 "암기팁:"으로 한 줄 팁을 주세요.\n\n[문제] ${q.question}\n[보기] ${(q.options||[]).join(' / ')}\n[정답] ${q.answer}\n${q.original_explanation?('[참고 해설] '+q.original_explanation):''}`;
+    try {
+        const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+encodeURIComponent(apiKey), {
+            method:'POST',
+            headers:{ 'content-type':'application/json' },
+            body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{ maxOutputTokens:600 } })
+        });
+        if(!res.ok) { console.warn('AI 응답 오류:', res.status); return null; }
+        const data = await res.json();
+        const parts = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
+        return (parts && parts.map(p=>p.text||'').join('')) || null;
+    } catch(e){ console.warn('AI 호출 실패:', e); return null; }
+}
 
 async function fetchAndDisplayAiExplanation(q) {
-    // Lite: AI 기능 비활성화
-    return;
+    if(typeof isPro!=='undefined' && !isPro) return;   // PRO 전용 (페이월 유지)
+    if(!q) return;
+    const el = document.getElementById('quizTipText');
+    if(!el) return;
+    if(!localStorage.getItem('geminiApiKey')){
+        el.innerHTML = '🔑 실시간 AI 해설을 켜려면 <b>설정 → Gemini API 키</b>를 입력하세요. (PRO 활성화됨)';
+        return;
+    }
+    const prev = el.innerHTML;
+    el.innerHTML = '🤖 AI가 해설을 작성 중…';
+    const text = await callGeminiAI(q);
+    el.innerHTML = text ? ((typeof wrapBareLaTeX==='function'?wrapBareLaTeX(text):text).replace(/\n/g,'<br>')) : prev;
 }
 // ====== Lite: 아래 원본 AI 코드는 주석 처리됨 ======
 /*
@@ -5575,10 +5600,20 @@ async function fetchAndDisplayAiExplanation(q) {
     tipEl.style.opacity = '0.4';
     ... (원본 AI 코드 생략)
 */
-// ====== Lite: AI 관련 함수들 비활성화 ======
-function initClaudeApiKeyUI() { /* Lite */ }
-function saveClaudeApiKey() { /* Lite */ }
-function handleAutoAiToggle() { /* Lite */ }
+// ====== Gemini API 키 UI ======
+function initClaudeApiKeyUI() {
+    const st = document.getElementById('apiKeyStatus');
+    if(st){
+        const has = !!localStorage.getItem('geminiApiKey');
+        st.innerHTML = has ? '🔐 API 키가 설정되어 있습니다. 새로 입력하면 덮어씁니다.' : 'Gemini 키를 입력하면 실시간 AI 해설이 켜집니다 (PRO).';
+        st.style.color = 'var(--text-muted)';
+    }
+}
+function handleAutoAiToggle() {
+    const t = document.getElementById('autoAiOnWrongToggle');
+    localStorage.setItem('autoAiOnWrong', t ? t.checked : false);
+    if(typeof showToast==='function') showToast((t&&t.checked) ? '🔬 오답 시 자동 AI 해설 ON' : '🔬 오답 시 자동 AI 해설 OFF');
+}
 
 function handleAutoNextToggle() {
     autoNextEnabled = document.getElementById('autoNextToggle').checked;
