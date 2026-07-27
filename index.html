@@ -8358,8 +8358,20 @@ function getSyncPayload() {
 }
 
 // ── 데이터 적용 ──
+/* 클라우드 bank가 통째로 덮어쓰면, 이 기기에서 받아둔 AI 해설(ai_live)이 날아간다.
+   (다른 기기에서 올린 사본·오래된 백업에는 ai_live가 없을 수 있음)
+   → 들어온 쪽에 없고 이 기기에 있으면 살려둔다. 데이터를 지우는 방향으로는 절대 동작하지 않는다. */
+function mergeKeepAiLive(localBank, cloudBank) {
+    if (!Array.isArray(localBank) || !Array.isArray(cloudBank)) return cloudBank;
+    for (let i = 0; i < cloudBank.length; i++) {
+        const c = cloudBank[i], l = localBank[i];
+        if (c && l && !c.ai_live && l.ai_live && c.question === l.question) c.ai_live = l.ai_live;
+    }
+    return cloudBank;
+}
+
 function applySyncPayload(json) {
-    if (json.bank)         { bank = json.bank; }
+    if (json.bank)         { bank = mergeKeepAiLive(bank, json.bank); }
     if (json.wrongArchive) { wrongArchive = json.wrongArchive; }
     if (json.userStats)    { userStats = json.userStats; }
     if (json.heatmapData)  { heatmapData = json.heatmapData; }
