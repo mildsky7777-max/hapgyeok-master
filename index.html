@@ -4560,7 +4560,9 @@ function iosScrollIntoView(el) {
 let userStats = { level:1, xp:0, maxXp:100, streak:0, totalSolved:0 };
 const TITLES = ["입문자","초보자","견습생","숙련공","전문가","베테랑","마스터","그랜드마스터","레전드","신"];
 let bank = [], filteredIndices = [], currentIndex = 0;
-let isAIMode = true, isShuffleMode = false, currentFilter = 'all';   /* AI 튜터 기본 ON (이지 지시 2026-07-27) */
+/* AI 튜터 기본 ON (이지 지시 2026-07-27) — 껐다 켜도 유지되도록 저장/복원 */
+let isAIMode = (localStorage.getItem('aiTutorMode') !== 'off');
+let isShuffleMode = false, currentFilter = 'all';
 let retrySet = new Set(), wrongArchive = [];
 let autoRequeue = false; // 틀린 직후 3문제 후 재출제
 let rangeFilter = null; // 범위 지정 학습 { from, to }
@@ -5547,6 +5549,7 @@ function toggleAITutor() {
     const apiKey = localStorage.getItem('geminiApiKey');
     if(!isAIMode && !requirePro('AI 해설·오답분석')) return;  /* Model A 게이트 */
     isAIMode=!isAIMode;
+    localStorage.setItem('aiTutorMode', isAIMode ? 'on' : 'off');
     syncAiTutorUI();
     updateUI();
     if(isAIMode) {
@@ -5584,9 +5587,15 @@ function handleAutoAiToggle() {
 }
 
 // ====== Gemini AI 기능 (PRO 전용 — 사용자 Google Gemini 키 직접 호출) ======
+let _aiPrevText = '';    /* 로딩 직전의 원래 해설 (겹친 요청에도 안 잃도록) */
+let _aiLastError = '';   /* 마지막 AI 실패 사유 (침묵 실패 방지) */
+let _aiReqSeq = 0;       /* 겹친 요청 판별용 시퀀스 */
+const AI_LOADING_HTML = '🤖 AI가 해설을 작성 중…';
+
 async function callGeminiAI(q) {
     const apiKey = localStorage.getItem('geminiApiKey');
-    if(!apiKey || !q) return null;
+    _aiLastError = '';
+    if(!apiKey || !q) { _aiLastError = 'API 키 없음'; return null; }
     const prompt = `당신은 국가기술자격(산업안전기사 등) 학습을 돕는 친절한 한국어 튜터입니다.\n아래 문제의 정답이 왜 맞는지, 학생이 헷갈리기 쉬운 함정은 무엇인지 3~4문장으로 쉽게 설명하고, 마지막 줄에 "암기팁:"으로 한 줄 팁을 주세요.\n\n[문제] ${q.question}\n[보기] ${(q.options||[]).join(' / ')}\n[정답] ${q.answer}\n${q.original_explanation?('[참고 해설] '+q.original_explanation):''}`;
     try {
         const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+encodeURIComponent(apiKey), {
@@ -5594,11 +5603,21 @@ async function callGeminiAI(q) {
             headers:{ 'content-type':'application/json' },
             body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{ maxOutputTokens:1024, thinkingConfig:{ thinkingBudget:0 } } })
         });
-        if(!res.ok) { console.warn('AI 응답 오류:', res.status); return null; }
+        if(!res.ok) {
+            console.warn('AI 응답 오류:', res.status);
+            _aiLastError = ({
+                400:'요청 형식 오류(400)', 403:'API 키 권한 없음(403)', 404:'모델을 찾을 수 없음(404)',
+                429:'호출 한도 초과(429) — 잠시 후 다시',  503:'서버 혼잡(503) — 잠시 후 다시'
+            })[res.status] || ('서버 응답 '+res.status);
+            if(res.status===400) _aiLastError = 'API 키가 올바르지 않거나 만료됨(400)';
+            return null;
+        }
         const data = await res.json();
         const parts = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
-        return (parts && parts.map(p=>p.text||'').join('')) || null;
-    } catch(e){ console.warn('AI 호출 실패:', e); return null; }
+        const out = (parts && parts.map(p=>p.text||'').join('')) || null;
+        if(!out) _aiLastError = '응답이 비어 있음' + (data.promptFeedback&&data.promptFeedback.blockReason ? ' ('+data.promptFeedback.blockReason+')' : '');
+        return out;
+    } catch(e){ console.warn('AI 호출 실패:', e); _aiLastError = '네트워크 연결 실패'; return null; }
 }
 
 async function fetchAndDisplayAiExplanation(q) {
@@ -5610,10 +5629,21 @@ async function fetchAndDisplayAiExplanation(q) {
         el.innerHTML = '🔑 실시간 AI 해설을 켜려면 <b>설정 → Gemini API 키</b>를 입력하세요. (PRO 활성화됨)';
         return;
     }
-    const prev = el.innerHTML;
-    el.innerHTML = '🤖 AI가 해설을 작성 중…';
+    /* 로딩 문구를 prev로 저장하면 요청이 겹칠 때 "작성 중…"이 영구 박제된다 */
+    const prev = (el.innerHTML === AI_LOADING_HTML) ? (_aiPrevText || '') : el.innerHTML;
+    _aiPrevText = prev;
+    const myReq = ++_aiReqSeq;
+    el.innerHTML = AI_LOADING_HTML;
     const text = await callGeminiAI(q);
-    el.innerHTML = text ? ((typeof wrapBareLaTeX==='function'?wrapBareLaTeX(text):text).replace(/\n/g,'<br>')) : prev;
+    if(myReq !== _aiReqSeq) return;   /* 더 최신 요청이 진행 중이면 늦은 응답은 버린다 */
+    if(text){
+        el.innerHTML = (typeof wrapBareLaTeX==='function'?wrapBareLaTeX(text):text).replace(/\n/g,'<br>');
+    } else {
+        /* 조용히 되돌리지 않는다 — 왜 안 나왔는지 보여준다 */
+        el.innerHTML = (prev ? prev + '<br><br>' : '') +
+            '<span style="opacity:.75;font-size:.92em">⚠️ 실시간 AI 해설 실패: ' +
+            (_aiLastError || '알 수 없는 오류') + ' · 설정에서 Gemini API 키를 확인하세요.</span>';
+    }
 }
 // ====== Lite: 아래 원본 AI 코드는 주석 처리됨 ======
 /*
