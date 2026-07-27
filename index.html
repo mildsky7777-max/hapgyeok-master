@@ -369,6 +369,7 @@ body.dark-mode .settings-tab-nav { border-color: #38383A; }
     width: 100%;
     max-width: var(--app-max);
     max-height: 88vh;
+    max-height: 88dvh;           /* 모바일 주소창 노출/숨김에 따라 실제 보이는 높이로 */
     background: var(--surface);
     border-radius: 28px 28px 0 0;
     z-index: 400;
@@ -398,6 +399,7 @@ body.dark-mode .settings-tab-nav { border-color: #38383A; }
     display: flex; align-items: center; justify-content: space-between;
     padding: 4px 16px 10px;
     flex-shrink: 0;
+    min-height: 0;
     border-bottom: 1px solid var(--bg);
 }
 .sheet-title { font-size: 1em; font-weight: 800; color: var(--text); }
@@ -419,6 +421,9 @@ body.dark-mode .settings-tab-nav { border-color: #38383A; }
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     flex: 1;
+    min-height: 0;               /* flex 기본 min-height:auto 해제 — 없으면 본문이 안 줄어들어
+                                    넘침이 위로 밀리고 헤더(닫기 버튼)가 화면 밖으로 나간다 */
+    overscroll-behavior: contain; /* 시트 안 스크롤이 뒤 배경으로 새지 않게 */
     padding-bottom: calc(14px + var(--safe-bottom));
 }
 
@@ -1011,8 +1016,10 @@ body.focus-mode #card-interface {
 /* ===== MODALS ===== */
 .modal-overlay {
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    height: 100dvh;                      /* 주소창 포함한 실제 화면 */
     background: rgba(0,0,0,0.4); z-index: 9000; display: none;
     justify-content: center; align-items: center;
+    overflow-y: auto;                    /* 모달이 화면보다 크면 오버레이가 스크롤 */
     -webkit-backdrop-filter: blur(12px) saturate(180%); backdrop-filter: blur(12px) saturate(180%);
     padding: 16px; box-sizing: border-box;
 }
@@ -1022,13 +1029,20 @@ body.focus-mode #card-interface {
     border-radius: 24px; padding: 24px;
     display: flex; flex-direction: column;
     max-height: 88vh;
+    max-height: 88dvh;            /* iOS/안드로이드: 주소창이 보이는 실제 높이 기준
+                                     (vh만 쓰면 주소창 높이만큼 모달이 커져 위아래가 잘린다) */
     -webkit-animation: popUp 0.24s var(--spring); animation: popUp 0.24s var(--spring);
     -webkit-overflow-scrolling: touch; overflow-y: auto;
     box-shadow: 0 24px 64px rgba(0,0,0,0.18), 0 0 0 0.5px rgba(0,0,0,0.06);
 }
 @-webkit-keyframes popUp { from{-webkit-transform:scale(0.92);transform:scale(0.92);opacity:0;} to{-webkit-transform:scale(1);transform:scale(1);opacity:1;} }
 @keyframes popUp { from{transform:scale(0.92);opacity:0;}to{transform:scale(1);opacity:1;} }
-.modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+.modal-header {
+    display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px;
+    position: sticky; top: -24px;        /* 박스 padding(24px) 만큼 올려 붙인다 */
+    background: var(--surface); z-index: 2;
+    padding: 24px 0 10px; margin-top: -24px;   /* 스크롤 시 내용이 헤더 뒤로 지나가게 */
+}
 .modal-title { font-size: 1.1em; font-weight: 800; margin: 0; }
 .modal-close { background: none; border: none; color: var(--text-sub); font-size: 0.9em; font-weight: 600; cursor: pointer; padding: 4px 8px; }
 
@@ -4546,7 +4560,7 @@ function iosScrollIntoView(el) {
 let userStats = { level:1, xp:0, maxXp:100, streak:0, totalSolved:0 };
 const TITLES = ["입문자","초보자","견습생","숙련공","전문가","베테랑","마스터","그랜드마스터","레전드","신"];
 let bank = [], filteredIndices = [], currentIndex = 0;
-let isAIMode = false, isShuffleMode = false, currentFilter = 'all';
+let isAIMode = true, isShuffleMode = false, currentFilter = 'all';   /* AI 튜터 기본 ON (이지 지시 2026-07-27) */
 let retrySet = new Set(), wrongArchive = [];
 let autoRequeue = false; // 틀린 직후 3문제 후 재출제
 let rangeFilter = null; // 범위 지정 학습 { from, to }
@@ -4782,6 +4796,7 @@ window.onload = async function() {
     restoreSessionState();
 
     applyFilter(); updateUI(); updateStatsUI(); updateGoalUI(); updateBadges();
+    syncAiTutorUI();   /* AI 튜터 기본 ON — 버튼·배지도 켜진 상태로 맞춘다 */
     initConfetti(); initSwipe();
 
     // V161: 복원된 필터 칩 UI 동기화
@@ -5520,12 +5535,19 @@ function toggleShuffle() {
     applyFilter(); updateUI();
 }
 
+function syncAiTutorUI() {
+    /* isAIMode 값을 버튼·배지·해설영역에 반영. 초기 로드와 토글 양쪽에서 쓴다. */
+    const btn = document.getElementById('btnAiTutor');
+    if (btn) btn.classList.toggle('active', isAIMode);
+    const badge = document.getElementById('aiStatusBadge');
+    if (badge) badge.style.display = isAIMode ? 'inline-block' : 'none';
+}
+
 function toggleAITutor() {
     const apiKey = localStorage.getItem('geminiApiKey');
     if(!isAIMode && !requirePro('AI 해설·오답분석')) return;  /* Model A 게이트 */
     isAIMode=!isAIMode;
-    document.getElementById('btnAiTutor').classList.toggle('active', isAIMode);
-    document.getElementById('aiStatusBadge').style.display=isAIMode?'inline-block':'none';
+    syncAiTutorUI();
     updateUI();
     if(isAIMode) {
         if(apiKey) {
