@@ -5592,6 +5592,21 @@ function handleAutoAiToggle() {
 }
 
 // ====== Gemini AI 기능 (PRO 전용 — 사용자 Google Gemini 키 직접 호출) ======
+/** AI가 돌려주는 건 마크다운이다. 그대로 넣으면 **별표**가 화면에 보인다.
+ *  굵게·기울임·목록·줄바꿈만 최소로 변환한다. (HTML은 이스케이프해서 주입 차단) */
+function aiMarkdownToHtml(t) {
+    let s = String(t)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+         .replace(/(^|[^*])\*(?!\s)([^*\n]+?)\*(?!\*)/g, '$1<em>$2</em>')
+         .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+         .replace(/^\s*[-•]\s+/gm, '· ')
+         .replace(/^\s*#{1,6}\s*/gm, '')
+         .replace(/\n/g, '<br>');
+    return s;
+}
+
 let _aiPrevText = '';    /* 로딩 직전의 원래 해설 (겹친 요청에도 안 잃도록) */
 let _aiLastError = '';   /* 마지막 AI 실패 사유 (침묵 실패 방지) */
 let _aiReqSeq = 0;       /* 겹친 요청 판별용 시퀀스 */
@@ -5656,10 +5671,20 @@ async function callGeminiAI(q) {
     for(let attempt=0; attempt<2; attempt++){
         try {
             bumpAiCallCount();
+            /* ⚠️ thinking 토큰은 maxOutputTokens를 같이 깎는다.
+               Gemini 3는 thinking이 기본 ON(HIGH)이라 예산을 다 먹고 본문이 잘린다.
+               2.5는 thinkingBudget:0으로 끄고, 3.x는 끌 수 없어 thinkingLevel을 낮춘다.
+               (둘을 동시에 보내면 오류) 예산도 넉넉히 준다. */
+            const thinking = /gemini-3|flash-latest/i.test(model)
+                ? { thinkingLevel: 'LOW' }
+                : { thinkingBudget: 0 };
             const res = await fetch(AI_BASE+'/models/'+model+':generateContent?key='+encodeURIComponent(apiKey), {
                 method:'POST',
                 headers:{ 'content-type':'application/json' },
-                body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{ maxOutputTokens:1024 } })
+                body: JSON.stringify({
+                    contents:[{parts:[{text:prompt}]}],
+                    generationConfig:{ maxOutputTokens: 4096, thinkingConfig: thinking }
+                })
             });
             if(!res.ok) {
                 console.warn('AI 응답 오류:', model, res.status);
@@ -5676,9 +5701,14 @@ async function callGeminiAI(q) {
                 return null;
             }
             const data = await res.json();
-            const parts = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
+            const cand = data.candidates && data.candidates[0];
+            const parts = cand && cand.content && cand.content.parts;
             const out = (parts && parts.map(p=>p.text||'').join('')) || null;
-            if(!out) _aiLastError = '응답이 비어 있음' + (data.promptFeedback&&data.promptFeedback.blockReason ? ' ('+data.promptFeedback.blockReason+')' : '');
+            if(!out) {
+                _aiLastError = (cand && cand.finishReason === 'MAX_TOKENS')
+                    ? '해설이 길어 잘렸습니다 — 다시 시도해 보세요'
+                    : '응답이 비어 있음' + (data.promptFeedback&&data.promptFeedback.blockReason ? ' ('+data.promptFeedback.blockReason+')' : '');
+            }
             return out;
         } catch(e){ console.warn('AI 호출 실패:', model, e); _aiLastError = '네트워크 연결 실패'; return null; }
     }
@@ -5696,7 +5726,7 @@ async function fetchAndDisplayAiExplanation(q) {
     }
     /* 이미 받아둔 해설이 있으면 호출하지 않는다 (무료 한도 절약 + 재방문에도 유지) */
     if(q.ai_live){
-        el.innerHTML = (typeof wrapBareLaTeX==='function'?wrapBareLaTeX(q.ai_live):q.ai_live).replace(/\n/g,'<br>');
+        el.innerHTML = aiMarkdownToHtml(q.ai_live);
         return;
     }
     /* 로딩 문구를 prev로 저장하면 요청이 겹칠 때 "작성 중…"이 영구 박제된다 */
@@ -5709,7 +5739,7 @@ async function fetchAndDisplayAiExplanation(q) {
     if(text){
         q.ai_live = text;                                     /* 캐시 — 같은 문제는 두 번 호출 안 함 */
         if(typeof saveDataLocal==='function') saveDataLocal();
-        el.innerHTML = (typeof wrapBareLaTeX==='function'?wrapBareLaTeX(text):text).replace(/\n/g,'<br>');
+        el.innerHTML = aiMarkdownToHtml(text);
     } else {
         /* 조용히 되돌리지 않는다 — 왜 안 나왔는지 보여준다 */
         const hint =
@@ -5721,6 +5751,10 @@ async function fetchAndDisplayAiExplanation(q) {
               ? '구글 서버가 혼잡합니다. 잠시 후 다시 시도하세요. (키는 정상)'
           : _aiLastError.indexOf('네트워크') >= 0
               ? '인터넷 연결을 확인하세요.'
+          : _aiLastError.indexOf('잘렸') >= 0
+              ? '이 문제는 해설이 유난히 길어 한도를 넘었습니다. "다시 풀기"로 재시도하면 대개 됩니다. (키는 정상)'
+          : _aiLastError.indexOf('비어') >= 0
+              ? '구글이 이 문제에 대한 답변을 반환하지 않았습니다. (키는 정상)'
               : '설정 → Gemini API 키를 확인하세요.';
         el.innerHTML = (prev ? prev + '<br><br>' : '') +
             '<span style="opacity:.75;font-size:.92em">⚠️ 실시간 AI 해설 실패: ' +
