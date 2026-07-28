@@ -5603,8 +5603,19 @@ function aiMarkdownToHtml(t) {
          .replace(/`([^`\n]+)`/g, '<code>$1</code>')
          .replace(/^\s*[-•]\s+/gm, '· ')
          .replace(/^\s*#{1,6}\s*/gm, '')
+         /* 짝이 안 맞고 남은 마커 제거 — 문장이 잘리면 여는 **만 남아 화면에 그대로 보인다 */
+         .replace(/\*+/g, '')
          .replace(/\n/g, '<br>');
     return s;
+}
+
+/** 해설이 문장 도중에 끊겼는지 판단. 한국어는 종결어미, 그 외는 문장부호로 본다. */
+function aiLooksTruncated(t) {
+    const s = String(t || '').trim();
+    if (!s) return true;
+    if (/[.!?…。」』”"')\]]$/.test(s)) return false;
+    if (/(다|요|음|함|임|까|죠|네|오)$/.test(s)) return false;
+    return true;
 }
 
 let _aiPrevText = '';    /* 로딩 직전의 원래 해설 (겹친 요청에도 안 잃도록) */
@@ -5675,20 +5686,27 @@ async function callGeminiAI(q) {
                Gemini 3는 thinking이 기본 ON(HIGH)이라 예산을 다 먹고 본문이 잘린다.
                2.5는 thinkingBudget:0으로 끄고, 3.x는 끌 수 없어 thinkingLevel을 낮춘다.
                (둘을 동시에 보내면 오류) 예산도 넉넉히 준다. */
-            const thinking = /gemini-3|flash-latest/i.test(model)
-                ? { thinkingLevel: 'LOW' }
-                : { thinkingBudget: 0 };
+            const gcfg = { maxOutputTokens: 4096 };
+            /* thinkingConfig 형태는 모델 세대마다 다르고, 거부되면 400이 난다.
+               한 번 거부당한 조합은 기억해 두고 다음부터는 빼고 보낸다. */
+            if (localStorage.getItem('aiNoThinkingCfg') !== '1') {
+                gcfg.thinkingConfig = /gemini-3|flash-latest/i.test(model)
+                    ? { thinkingLevel: 'LOW' }
+                    : { thinkingBudget: 0 };
+            }
             const res = await fetch(AI_BASE+'/models/'+model+':generateContent?key='+encodeURIComponent(apiKey), {
                 method:'POST',
                 headers:{ 'content-type':'application/json' },
-                body: JSON.stringify({
-                    contents:[{parts:[{text:prompt}]}],
-                    generationConfig:{ maxOutputTokens: 4096, thinkingConfig: thinking }
-                })
+                body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig: gcfg })
             });
             if(!res.ok) {
                 console.warn('AI 응답 오류:', model, res.status);
                 /* 모델이 없거나(404) 한도·혼잡(429/503)이면 다른 모델로 한 번 더 */
+                if(res.status === 400 && gcfg.thinkingConfig && attempt === 0) {
+                    /* thinkingConfig가 거부된 경우 — 모델을 바꿀 게 아니라 이 옵션을 빼야 한다 */
+                    localStorage.setItem('aiNoThinkingCfg', '1');
+                    continue;
+                }
                 if([404, 400, 429, 503].indexOf(res.status) >= 0 && attempt === 0) {
                     const next = await resolveAiModel(apiKey, true);   /* 목록 재조회 */
                     if (next && next !== model) { model = next; continue; }
@@ -5724,11 +5742,14 @@ async function fetchAndDisplayAiExplanation(q) {
         el.innerHTML = '🔑 실시간 AI 해설을 켜려면 <b>설정 → Gemini API 키</b>를 입력하세요. (PRO 활성화됨)';
         return;
     }
-    /* 이미 받아둔 해설이 있으면 호출하지 않는다 (무료 한도 절약 + 재방문에도 유지) */
-    if(q.ai_live){
+    /* 이미 받아둔 해설이 있으면 호출하지 않는다 (무료 한도 절약 + 재방문에도 유지)
+       ⚠️ 단 잘린 해설은 버리고 다시 받는다 — 캐시가 불량 응답을 영구 박제하기 때문이다
+       (2026-07-28: thinking 토큰 문제로 잘린 해설들이 캐시에 남아 수정 후에도 계속 보였음) */
+    if(q.ai_live && !aiLooksTruncated(q.ai_live)){
         el.innerHTML = aiMarkdownToHtml(q.ai_live);
         return;
     }
+    if(q.ai_live){ delete q.ai_live; }   /* 불량 캐시 폐기 */
     /* 로딩 문구를 prev로 저장하면 요청이 겹칠 때 "작성 중…"이 영구 박제된다 */
     const prev = (el.innerHTML === AI_LOADING_HTML) ? (_aiPrevText || '') : el.innerHTML;
     _aiPrevText = prev;
@@ -5737,9 +5758,16 @@ async function fetchAndDisplayAiExplanation(q) {
     const text = await callGeminiAI(q);
     if(myReq !== _aiReqSeq) return;   /* 더 최신 요청이 진행 중이면 늦은 응답은 버린다 */
     if(text){
-        q.ai_live = text;                                     /* 캐시 — 같은 문제는 두 번 호출 안 함 */
-        if(typeof saveDataLocal==='function') saveDataLocal();
-        el.innerHTML = aiMarkdownToHtml(text);
+        /* 잘린 응답은 캐시하지 않는다 — 캐시하면 다시 받을 기회가 영영 없어진다 */
+        if(!aiLooksTruncated(text)){
+            q.ai_live = text;                                 /* 캐시 — 같은 문제는 두 번 호출 안 함 */
+            if(typeof saveDataLocal==='function') saveDataLocal();
+            el.innerHTML = aiMarkdownToHtml(text);
+        } else {
+            el.innerHTML = aiMarkdownToHtml(text) +
+                '<br><span style="opacity:.7;font-size:.9em">✂️ 해설이 중간에 잘렸습니다. ' +
+                '"다시 풀기"를 누르면 새로 받아옵니다. (저장하지 않음)</span>';
+        }
     } else {
         /* 조용히 되돌리지 않는다 — 왜 안 나왔는지 보여준다 */
         const hint =
