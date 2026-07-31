@@ -8451,18 +8451,47 @@ function fbSignOut() {
 }
 
 // ── Firebase 경로 ──
-function fbPath() {
+function fbPath() {           // 진행상황 노드 (매 답 저장, 작음)
     if (!fbUser) return null;
     return fbDb.ref('users/' + fbUser.uid + '/data');
 }
+function _bankNodeRef() {     // 문제 노드 (내용 바뀔 때만 저장, 큼)
+    if (!fbUser) return null;
+    return fbDb.ref('users/' + fbUser.uid + '/bank');
+}
 
-// ── 저장할 데이터 패키지 ──
+// 진행상황만 추출/적용 — 문제(고정 콘텐츠)와 ai_live(재생성 가능 캐시)는 제외
+const _STATIC_Q_FIELDS = ['question','options','answer','original_explanation','ai_tip','tag','subject','keywords','summary','image','ai_live'];
+function _extractProgress(){
+    const prog = {};
+    for(let i=0;i<bank.length;i++){
+        const q = bank[i]; if(!q) continue;
+        const p = {};
+        for(const k in q){ if(_STATIC_Q_FIELDS.indexOf(k) < 0) p[k] = q[k]; }
+        if(Object.keys(p).length) prog[i] = p;
+    }
+    return prog;
+}
+function _applyProgress(prog){
+    if(!prog || !bank || !bank.length) return;
+    for(const k in prog){ const q = bank[+k]; if(!q) continue; const p = prog[k]; for(const f in p) q[f] = p[f]; }
+}
+// 문제 내용 서명 — 바뀌면(업로드/삭제) 값이 달라짐 → 그때만 문제 노드 재전송
+function _bankSig(){
+    if(!bank || !bank.length) return '0';
+    let s=''; const step=Math.max(1, Math.floor(bank.length/40));
+    for(let i=0;i<bank.length;i+=step){ const q=bank[i]||{}; s += (q.question||'').slice(0,24) + (q.answer||'').slice(0,6); }
+    let h=2166136261; for(let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h,16777619); }
+    return bank.length + '_' + (h>>>0).toString(36);
+}
+
+// ── 저장할 데이터 패키지 (진행상황만 — 문제 통째 제외로 2.5MB→수KB) ──
 function getSyncPayload() {
     return {
-        version: '152',
+        version: '200',
         ts: Date.now(),
         date: new Date().toISOString(),
-        bank: bank,
+        progress: _extractProgress(),
         wrongArchive: wrongArchive,
         userStats: userStats,
         heatmapData: heatmapData
@@ -8483,7 +8512,8 @@ function mergeKeepAiLive(localBank, cloudBank) {
 }
 
 function applySyncPayload(json) {
-    if (json.bank)         { bank = mergeKeepAiLive(bank, json.bank); }
+    if (json.progress)     { _applyProgress(json.progress); }        // 신규: 진행상황만
+    else if (json.bank)    { bank = mergeKeepAiLive(bank, json.bank); } // 구버전: 전체 bank
     if (json.wrongArchive) { wrongArchive = json.wrongArchive; }
     if (json.userStats)    { userStats = json.userStats; }
     if (json.heatmapData)  { heatmapData = json.heatmapData; }
@@ -8498,23 +8528,29 @@ function applySyncPayload(json) {
 async function fbAutoLoad() {
     if (!fbUser) return;
     try {
-        const snap = await fbPath().once('value');
-        const cloud = snap.val();
+        // 진행상황 노드 + 문제 노드 동시 읽기
+        const [dSnap, bSnap] = await Promise.all([ fbPath().once('value'), _bankNodeRef().once('value') ]);
+        const cloud = dSnap.val();
+        const bankNode = bSnap.val();
+        // 문제: 신규 /bank 노드 우선, 없으면 구버전 cloud.bank
+        const cloudBank = (bankNode && bankNode.bank) || (cloud && cloud.bank) || null;
+        const localTs  = userStats.lastSaved || 0;
+        const cloudTs  = cloud ? (cloud.ts || 0) : 0;
+        // 이 기기에 문제가 없거나(새 기기) 클라우드가 더 최신이면 클라우드 문제로 세팅(로컬 ai_live 보존)
+        if (cloudBank && cloudBank.length && (!bank || !bank.length || cloudTs > localTs)) {
+            bank = mergeKeepAiLive(bank, cloudBank);
+        }
         if (!cloud) {
-            // 클라우드에 데이터 없음 → 현재 기기 데이터 업로드
+            // 진행상황 없음 → 현재 기기 데이터 업로드
             fbSaveNow();
             return;
         }
-        const localTs  = userStats.lastSaved || 0;
-        const cloudTs  = cloud.ts || 0;
         if (cloudTs > localTs) {
-            // 클라우드가 더 최신 → 자동 적용
-            applySyncPayload(cloud);
+            applySyncPayload(cloud);   // progress(신) 또는 bank(구) 자동 처리
             const t = new Date(cloudTs).toLocaleString('ko-KR');
             showToast('☁️ 최신 학습 기록을 불러왔습니다 (' + t + ')', 'success');
             updateSyncLastTime(cloudTs);
         } else if (localTs > cloudTs) {
-            // 이 기기가 더 최신 → 자동 업로드
             fbSaveNow();
         }
     } catch(e) {
@@ -8533,6 +8569,14 @@ function fbTriggerAutoSave() {
 async function fbSaveToCloud(showMsg = true) {
     if (!fbUser) return;
     try {
+        // 문제(bank)는 내용이 바뀌었을 때만 별도 노드에 (첫 저장 포함). 서명으로 판별
+        const sig = _bankSig();
+        const sigKey = 'bankSyncedSig_' + fbUser.uid;
+        if (bank && bank.length && sig !== localStorage.getItem(sigKey)) {
+            await _bankNodeRef().set({ ts: Date.now(), bank: bank });
+            localStorage.setItem(sigKey, sig);
+        }
+        // 진행상황은 항상 (작음)
         const payload = getSyncPayload();
         userStats.lastSaved = payload.ts;
         await fbPath().set(payload);
@@ -8555,9 +8599,12 @@ async function fbLoadNow() {
     showConfirm('📥 클라우드 데이터를 불러올까요?\n현재 기기의 기록이 덮어씌워집니다.', async () => {
         try {
             syncSetStatus('loading', '불러오는 중...');
-            const snap = await fbPath().once('value');
-            const cloud = snap.val();
+            const [dSnap, bSnap] = await Promise.all([ fbPath().once('value'), _bankNodeRef().once('value') ]);
+            const cloud = dSnap.val();
+            const bankNode = bSnap.val();
+            const cloudBank = (bankNode && bankNode.bank) || (cloud && cloud.bank) || null;
             if (!cloud) { showToast('클라우드에 저장된 데이터가 없습니다.', 'warning'); renderSyncModal(); return; }
+            if (cloudBank && cloudBank.length) { bank = mergeKeepAiLive(bank, cloudBank); }
             applySyncPayload(cloud);
             updateSyncLastTime(cloud.ts);
             renderSyncModal();
