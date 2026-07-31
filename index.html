@@ -7520,8 +7520,9 @@ function saveDataLocal() {
     }
     // quizData(대용량·그림 포함)는 IndexedDB로 — localStorage 5MB 한계 해제
     idbSet('quizBank', bank).catch(e=>{
-        console.error('quizBank IDB 저장 오류:', e);
-        if(!_quotaWarningShown){ _quotaWarningShown = true; showStorageWarning(null, true); }
+        console.warn('quizBank IDB 저장 실패:', e);
+        // 클라우드 연결 시엔 데이터가 클라우드에 안전 → 무서운 경고 안 띄움. 미연결일 때만 경고
+        if(!_quotaWarningShown && !(typeof fbUser!=='undefined' && fbUser)){ _quotaWarningShown = true; showStorageWarning(null, true); }
     });
 }
 
