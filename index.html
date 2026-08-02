@@ -7090,10 +7090,57 @@ function submitArchiveAnswer() {
     re.innerText=(a.ai_tip||a.original_explanation||'해설 정보가 없습니다.');
     // V162: 해설 수식 렌더링
     renderMath(re);
+    /* 아카이브에서도 AI 해설 — 메인 퀴즈와 동일 규칙(AI 튜터 ON + 기본은 틀렸을 때만) */
+    if(typeof isAIMode!=='undefined' && isAIMode){
+        const autoAiOnWrong = localStorage.getItem('autoAiOnWrong') !== 'false';
+        if(autoAiOnWrong ? !isCorrect : true) fetchAndDisplayArchiveAi(a);
+    }
     const ckBtn=document.getElementById('aqCheckBtn');
     ckBtn.innerText=aqIdx===aqList.length-1?'결과 보기 ✓':'다음 문제 ▶';
     setTimeout(()=>{ try{rb.scrollIntoView({behavior:'smooth',block:'nearest'});}catch(e){} },100);
 }
+/* ── 아카이브 풀기 AI 해설 ──
+   메인 퀴즈와 같은 엔진(callGeminiAI: 모델 자동선택·잘림감지·에러안내)을 그대로 쓴다.
+   캐시는 아카이브 항목(a.ai_live)에 저장하고, 같은 문제가 문제은행에도 있으면 서로 재사용해
+   같은 문제로 두 번 호출하지 않는다(무료 한도 절약). */
+let _aqAiSeq = 0;
+async function fetchAndDisplayArchiveAi(a) {
+    const el = document.getElementById('aqResultExp');
+    if(!el || !a) return;
+    if(!localStorage.getItem('geminiApiKey')){
+        el.innerHTML += '<br><span style="opacity:.7;font-size:.9em">🔑 실시간 AI 해설은 설정에서 Gemini API 키를 넣으면 켜집니다.</span>';
+        return;
+    }
+    /* 1) 아카이브에 받아둔 해설 */
+    if(a.ai_live && !aiLooksTruncated(a.ai_live)){ el.innerHTML = aiMarkdownToHtml(a.ai_live); renderMath(el); return; }
+    if(a.ai_live) delete a.ai_live;                       /* 잘린 캐시는 폐기 후 재요청 */
+    /* 2) 문제은행에 같은 문제의 해설이 있으면 그대로 재사용 */
+    const bq = (typeof bank!=='undefined' && bank) ? bank.find(x => x && x.question === a.question) : null;
+    if(bq && bq.ai_live && !aiLooksTruncated(bq.ai_live)){
+        a.ai_live = bq.ai_live; saveArchive();
+        el.innerHTML = aiMarkdownToHtml(bq.ai_live); renderMath(el); return;
+    }
+    /* 3) 새로 호출 */
+    const prev = el.innerHTML;
+    const myReq = ++_aqAiSeq;
+    el.innerHTML = AI_LOADING_HTML;
+    const text = await callGeminiAI(a);
+    if(myReq !== _aqAiSeq) return;                        /* 다음 문제로 넘어갔으면 늦은 응답 버림 */
+    if(text){
+        if(!aiLooksTruncated(text)){
+            a.ai_live = text; saveArchive();
+            if(bq){ bq.ai_live = text; if(typeof saveDataLocal==='function') saveDataLocal(); }
+            el.innerHTML = aiMarkdownToHtml(text);
+        } else {
+            el.innerHTML = aiMarkdownToHtml(text) +
+                '<br><span style="opacity:.7;font-size:.9em">✂️ 해설이 중간에 잘렸습니다 — 다시 풀면 새로 받아옵니다.</span>';
+        }
+        renderMath(el);
+    } else {
+        el.innerHTML = prev + '<br><span style="opacity:.75;font-size:.9em">⚠️ AI 해설을 못 받았어요: ' + (_aiLastError || '알 수 없는 오류') + '</span>';
+    }
+}
+
 function archiveQuizNav(step) {
     const total=aqList.length, next=aqIdx+step;
     if(step===1&&aqIdx===total-1){showArchiveQuizDone();return;}
