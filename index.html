@@ -4419,6 +4419,8 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
                 </div>
             </div>
             <div class="archive-stats-bar" id="archiveStatsBar"></div>
+            <button id="archiveDueBtn" onclick="startArchiveDueReview()" style="width:100%;margin-top:8px;padding:12px;background:var(--primary);color:#fff;border:none;border-radius:12px;font-size:0.92em;font-weight:800;cursor:pointer">📅 오늘 복습</button>
+            <div style="font-size:0.72em;color:var(--text-muted);text-align:center;margin-top:4px">틀린 문제를 1일 → 3일 → 7일 → 14일 간격으로 다시 물어봅니다</div>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
                 <button onclick="toggleArchiveFilter()" id="archiveFilterToggleBtn" style="font-size:0.78em;color:var(--text-muted);background:none;border:1.5px solid var(--border);border-radius:8px;padding:4px 10px;cursor:pointer;font-weight:700">🔽 필터 펼치기</button>
                 <div style="display:flex;gap:6px">
@@ -4450,6 +4452,11 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
                     <button onclick="setArchiveCountFilter('1')" id="acf-1" class="adf-chip">1회</button>
                     <button onclick="setArchiveCountFilter('2')" id="acf-2" class="adf-chip">2회</button>
                     <button onclick="setArchiveCountFilter('3+')" id="acf-3" class="adf-chip">3회+</button>
+                </div>
+                <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+                    <span style="font-size:0.75em;font-weight:700;color:var(--text-muted);align-self:center;flex-shrink:0">복습</span>
+                    <button onclick="setArchiveDueFilter('all')" id="arf-all" class="adf-chip adf-active">전체</button>
+                    <button onclick="setArchiveDueFilter('due')" id="arf-due" class="adf-chip">📅 오늘 복습</button>
                 </div>
                 <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
                     <span style="font-size:0.75em;font-weight:700;color:var(--text-muted);align-self:center;flex-shrink:0">숙달</span>
@@ -6814,7 +6821,7 @@ function addToArchive(q) {
     saveArchive();
 }
 function saveArchive() { localStorage.setItem('wrongArchive_v50',JSON.stringify(wrongArchive)); }
-function openArchiveModal() { archiveFieldFilter='all'; archiveDateFilter='all'; archiveTagFilter='all'; archiveSubjectFilter='all'; archiveCountFilter='all'; archiveSourceFilter='all'; archiveMasteryFilter='all'; document.querySelectorAll('.adf-chip').forEach(c=>c.classList.remove('adf-active')); ['adf-all','acf-all','asf-all','amf-all'].forEach(function(id){ const c=document.getElementById(id); if(c) c.classList.add('adf-active'); }); const allChip=document.getElementById('adf-all'); if(allChip) allChip.classList.add('adf-active'); document.getElementById('archiveSearch').value=''; document.getElementById('archiveSortSelect').value='date_desc'; document.getElementById('resetModal').style.display='none'; renderArchiveInsight(); renderArchiveList(); document.getElementById('archiveModal').style.display='flex'; }
+function openArchiveModal() { archiveFieldFilter='all'; archiveDateFilter='all'; archiveTagFilter='all'; archiveSubjectFilter='all'; archiveCountFilter='all'; archiveSourceFilter='all'; archiveMasteryFilter='all'; archiveDueFilter='all'; document.querySelectorAll('.adf-chip').forEach(c=>c.classList.remove('adf-active')); ['adf-all','acf-all','asf-all','amf-all','arf-all'].forEach(function(id){ const c=document.getElementById(id); if(c) c.classList.add('adf-active'); }); updateArchiveDueBtn(); const allChip=document.getElementById('adf-all'); if(allChip) allChip.classList.add('adf-active'); document.getElementById('archiveSearch').value=''; document.getElementById('archiveSortSelect').value='date_desc'; document.getElementById('resetModal').style.display='none'; renderArchiveInsight(); renderArchiveList(); document.getElementById('archiveModal').style.display='flex'; }
 function closeArchiveModal() { document.getElementById('archiveModal').style.display='none'; }
 
 let archiveFieldFilter = 'all';
@@ -6825,8 +6832,54 @@ let archiveSubjectFilter = 'all';
 let archiveCountFilter = 'all';
 /* 숙달 필터: all / weak(연속정답 2회 미만 = 아직 취약) / mastered(2회 이상 = 잡음) */
 let archiveMasteryFilter = 'all';
+let archiveDueFilter = 'all';        /* all / due(오늘 복습할 것) */
 const ARCHIVE_MASTER_STREAK = 2;
 function isArchiveMastered(a){ return (a.practice_streak||0) >= ARCHIVE_MASTER_STREAK; }
+
+/* ── 아카이브 간격반복 ──
+   틀린 문제는 한 번 맞혔다고 끝이 아니다. 연속정답이 쌓일수록 간격을 벌려 다시 물어본다.
+   (문제은행에는 SM-2가 있었지만 아카이브에는 복습 일정이 없어서, 무엇을 언제 볼지 사람이 매번 판단해야 했다) */
+const ARCHIVE_INTERVALS = [0, 1, 3, 7, 14, 30];   /* 연속정답 수 → 다음 복습까지 일수 */
+function archiveDueTime(a){
+    if(!a.lastPractice) return 0;                 /* 아직 한 번도 복습 안 한 오답 = 지금 바로 */
+    const d = ARCHIVE_INTERVALS[Math.min(a.practice_streak||0, ARCHIVE_INTERVALS.length-1)];
+    return new Date(a.lastPractice).getTime() + d*86400000;
+}
+function isArchiveDue(a){ return archiveDueTime(a) <= Date.now(); }
+function archiveDueCount(){ return wrongArchive.filter(isArchiveDue).length; }
+/* 남은 날짜 표시용 */
+function archiveDueLabel(a){
+    if(isArchiveDue(a)) return '📅 오늘';
+    const days = Math.ceil((archiveDueTime(a) - Date.now())/86400000);
+    return 'D-' + days;
+}
+function setArchiveDueFilter(f) {
+    archiveDueFilter = f;
+    document.querySelectorAll('[id^="arf-"]').forEach(b => b.classList.remove('adf-active'));
+    const el = document.getElementById('arf-' + f); if(el) el.classList.add('adf-active');
+    renderArchiveList();
+}
+/* 오늘 복습 시작 — 취약한 것(연속정답 적은 것) → 많이 틀린 것 순으로 */
+function startArchiveDueReview(){
+    const list = wrongArchive.filter(isArchiveDue).sort(function(x,y){
+        const sx=x.practice_streak||0, sy=y.practice_streak||0;
+        if(sx!==sy) return sx-sy;
+        return (y.wrongCount||1)-(x.wrongCount||1);
+    });
+    if(!list.length){ showToast('오늘 복습할 오답이 없어요! 👏','success'); return; }
+    aqList=list; aqIdx=0; aqCorrect=0; aqWrong=0; aqAnswered=false; aqMissed=[];
+    document.getElementById('archiveModal').style.display='none';
+    document.getElementById('archiveQuizModal').style.display='flex';
+    renderArchiveQuiz();
+}
+/* 헤더 CTA 문구 갱신 */
+function updateArchiveDueBtn(){
+    const b = document.getElementById('archiveDueBtn');
+    if(!b) return;
+    const n = archiveDueCount();
+    b.innerHTML = n>0 ? ('📅 오늘 복습 <b>'+n+'</b>개 시작') : '✅ 오늘 복습 완료!';
+    b.style.background = n>0 ? 'var(--primary)' : 'var(--success, #16A34A)';
+}
 function setArchiveMasteryFilter(f) {
     archiveMasteryFilter = f;
     document.querySelectorAll('[id^="amf-"]').forEach(b => b.classList.remove('adf-active'));
@@ -6925,10 +6978,27 @@ function renderArchiveInsight() {
 
     if(insights.length > 0) {
         card.style.display = 'block';
-        text.innerHTML = insights.join('<br>');
+        /* 진단에서 끝내지 않고 바로 실행까지 — 가장 취약한 과목만 즉시 풀기 */
+        const act = topSubject
+            ? `<button onclick="startArchiveWeakSubject('${String(topSubject[0]).replace(/'/g,"\\'")}')" style="margin-top:8px;padding:8px 12px;background:var(--warning);color:#fff;border:none;border-radius:9px;font-size:0.8em;font-weight:800;cursor:pointer">🎯 ${escapeHtml(topSubject[0])}만 집중 풀기</button>`
+            : '';
+        text.innerHTML = insights.join('<br>') + act;
     } else {
         card.style.display = 'none';
     }
+}
+
+/* 취약 과목만 바로 풀기 — 아직 안 잡힌 문제(연속정답 2회 미만) 우선 */
+function startArchiveWeakSubject(subject){
+    let list = wrongArchive.filter(a => (a.subject||'미분류') === subject);
+    const weak = list.filter(a => !isArchiveMastered(a));
+    if(weak.length) list = weak;                       /* 이미 잡은 건 빼고, 다 잡았으면 전체 */
+    if(!list.length){ showToast('해당 과목 오답이 없습니다.'); return; }
+    list.sort((x,y) => ((x.practice_streak||0)-(y.practice_streak||0)) || ((y.wrongCount||1)-(x.wrongCount||1)));
+    aqList=list; aqIdx=0; aqCorrect=0; aqWrong=0; aqAnswered=false; aqMissed=[];
+    document.getElementById('archiveModal').style.display='none';
+    document.getElementById('archiveQuizModal').style.display='flex';
+    renderArchiveQuiz();
 }
 
 function renderArchiveList() {
@@ -6995,7 +7065,8 @@ function renderArchiveList() {
     container.innerHTML=list.map(a=>{
         const practiceAcc=a.practice_total>0?Math.round(a.practice_correct/a.practice_total*100):null;
         const practiceStr=(practiceAcc!==null?`<span style="background:var(--primary-light);color:var(--primary)">🎯 ${a.practice_correct}/${a.practice_total} (${practiceAcc}%)</span>`:'')
-            + (isArchiveMastered(a)?`<span style="background:var(--success-light,#DCFCE7);color:var(--success,#16A34A);font-weight:800">✅ 잡음</span>`:'');
+            + (isArchiveMastered(a)?`<span style="background:var(--success-light,#DCFCE7);color:var(--success,#16A34A);font-weight:800">✅ 잡음</span>`:'')
+            + (isArchiveDue(a)?`<span style="background:var(--primary-light);color:var(--primary);font-weight:800">📅 오늘 복습</span>`:`<span style="background:var(--bg);color:var(--text-muted)">${archiveDueLabel(a)}</span>`);
         const qField=fieldMap[a.tag]||getAutoField(a.tag);
         const fieldBadge=qField?`<span style="font-size:0.72em;padding:2px 7px;border-radius:10px;font-weight:700;color:#fff;background:${FIELD_COLORS[qField]||'#64748B'}">${qField}</span>`:'';
         return `<div class="archive-item" id="arc-${a.id}" onclick="startArchivePracticeFrom('${a.id}')" style="cursor:pointer">
@@ -7043,6 +7114,7 @@ function getFilteredArchiveList() {
         if(archiveSourceFilter==='normal' && a.fromMock) return false;
         if(archiveMasteryFilter==='weak' && isArchiveMastered(a)) return false;
         if(archiveMasteryFilter==='mastered' && !isArchiveMastered(a)) return false;
+        if(archiveDueFilter==='due' && !isArchiveDue(a)) return false;
         return true;
     });
 }
@@ -7071,7 +7143,7 @@ function startArchivePracticeFrom(id) {
     document.getElementById('archiveQuizModal').style.display='flex';
     renderArchiveQuiz();
 }
-function closeArchiveQuiz() { document.getElementById('archiveQuizModal').style.display='none'; document.getElementById('archiveModal').style.display='flex'; renderArchiveList(); }
+function closeArchiveQuiz() { document.getElementById('archiveQuizModal').style.display='none'; document.getElementById('archiveModal').style.display='flex'; renderArchiveList(); updateArchiveDueBtn(); }
 function renderArchiveQuiz() {
     const total=aqList.length, a=aqList[aqIdx]; aqAnswered=false;
     document.getElementById('aqTitle').innerText='📚 아카이브 풀기 ('+a.tag+')';
@@ -7123,6 +7195,7 @@ function submitArchiveAnswer() {
         if(isCorrect) _it.practice_correct=(_it.practice_correct||0)+1;
         /* 연속 정답(숙달도) — 2회 연속 맞히면 '잡음'으로 보고 집중 대상에서 뺀다 */
         _it.practice_streak = isCorrect ? ((_it.practice_streak||0)+1) : 0;
+        _it.lastPractice = new Date().toISOString();   /* 간격반복 기준일 */
         saveArchive();
     }
     const rb=document.getElementById('aqResultBox');
