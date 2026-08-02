@@ -4454,6 +4454,13 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
                     <button onclick="setArchiveCountFilter('3+')" id="acf-3" class="adf-chip">3회+</button>
                 </div>
                 <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+                    <span style="font-size:0.75em;font-weight:700;color:var(--text-muted);align-self:center;flex-shrink:0">원인</span>
+                    <button onclick="setArchiveReflectFilter('all')" id="axf-all" class="adf-chip adf-active">전체</button>
+                    <button onclick="setArchiveReflectFilter('misconception')" id="axf-misconception" class="adf-chip">🔴 개념 오해</button>
+                    <button onclick="setArchiveReflectFilter('careless')" id="axf-careless" class="adf-chip">🟡 실수</button>
+                    <button onclick="setArchiveReflectFilter('unknown')" id="axf-unknown" class="adf-chip">⚪ 처음 봄</button>
+                </div>
+                <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
                     <span style="font-size:0.75em;font-weight:700;color:var(--text-muted);align-self:center;flex-shrink:0">복습</span>
                     <button onclick="setArchiveDueFilter('all')" id="arf-all" class="adf-chip adf-active">전체</button>
                     <button onclick="setArchiveDueFilter('due')" id="arf-due" class="adf-chip">📅 오늘 복습</button>
@@ -4499,6 +4506,14 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
                 <div class="aq-result-box" id="aqResultBox">
                     <div class="aq-result-title" id="aqResultTitle"></div>
                     <div class="aq-result-exp" id="aqResultExp"></div>
+                    <div id="aqReflectRow" style="display:none;margin-top:10px">
+                        <div style="font-size:0.76em;color:var(--text-muted);font-weight:700;margin-bottom:5px">왜 틀렸나요?</div>
+                        <div style="display:flex;gap:6px;flex-wrap:wrap">
+                            <button class="aq-reflect-btn" onclick="recordArchiveReflect('misconception')" style="flex:1;min-width:88px;padding:8px;border:1.5px solid var(--border);background:var(--surface);color:var(--text);border-radius:9px;font-size:0.78em;font-weight:700;cursor:pointer">🔴 개념 오해</button>
+                            <button class="aq-reflect-btn" onclick="recordArchiveReflect('careless')" style="flex:1;min-width:88px;padding:8px;border:1.5px solid var(--border);background:var(--surface);color:var(--text);border-radius:9px;font-size:0.78em;font-weight:700;cursor:pointer">🟡 실수</button>
+                            <button class="aq-reflect-btn" onclick="recordArchiveReflect('unknown')" style="flex:1;min-width:88px;padding:8px;border:1.5px solid var(--border);background:var(--surface);color:var(--text);border-radius:9px;font-size:0.78em;font-weight:700;cursor:pointer">⚪ 처음 봄</button>
+                        </div>
+                    </div>
                     <div class="aq-permanent-badge">📌 맞춰도 아카이브에 영구 보존됩니다</div>
                 </div>
             </div>
@@ -6807,21 +6822,23 @@ function retryWrongAnswers() {
 /* ============================================================
    ARCHIVE
 ============================================================ */
+function archiveKeyOf(q){ return (q.tag||'기타')+'||'+String(q.question||'').trim().slice(0,80); }
 function addToArchive(q) {
-    const key=(q.tag||'기타')+'||'+q.question.trim().slice(0,80);
+    const key=archiveKeyOf(q);
     const idx=wrongArchive.findIndex(a=>a.key===key);
     if(idx>=0){
         wrongArchive[idx].wrongCount=(wrongArchive[idx].wrongCount||1)+1;
         wrongArchive[idx].lastDate=todayStr; wrongArchive[idx].myAns=q.my_ans;
         if(!wrongArchive[idx].options&&q.options) wrongArchive[idx].options=q.options;
         if(q.fromMock) wrongArchive[idx].fromMock=true;
+        if(q.reflectType) wrongArchive[idx].reflectType=q.reflectType;   /* 오답 원인 이어받기 */
     } else {
-        wrongArchive.push({ id:String(Date.now())+String(Math.floor(Math.random()*10000)), key, question:q.question, answer:q.answer, options:q.options||[], keywords:q.keywords||[], tag:q.tag||'기타', subject:q.subject||'미분류(공통)', original_explanation:q.original_explanation||'', ai_tip:q.ai_tip||'', myAns:q.my_ans, firstDate:todayStr, lastDate:todayStr, wrongCount:1, practice_total:0, practice_correct:0, fromMock: q.fromMock||false });
+        wrongArchive.push({ id:String(Date.now())+String(Math.floor(Math.random()*10000)), key, question:q.question, answer:q.answer, options:q.options||[], keywords:q.keywords||[], tag:q.tag||'기타', subject:q.subject||'미분류(공통)', original_explanation:q.original_explanation||'', ai_tip:q.ai_tip||'', myAns:q.my_ans, firstDate:todayStr, lastDate:todayStr, wrongCount:1, practice_total:0, practice_correct:0, fromMock: q.fromMock||false, reflectType: q.reflectType||null });
     }
     saveArchive();
 }
 function saveArchive() { localStorage.setItem('wrongArchive_v50',JSON.stringify(wrongArchive)); }
-function openArchiveModal() { archiveFieldFilter='all'; archiveDateFilter='all'; archiveTagFilter='all'; archiveSubjectFilter='all'; archiveCountFilter='all'; archiveSourceFilter='all'; archiveMasteryFilter='all'; archiveDueFilter='all'; document.querySelectorAll('.adf-chip').forEach(c=>c.classList.remove('adf-active')); ['adf-all','acf-all','asf-all','amf-all','arf-all'].forEach(function(id){ const c=document.getElementById(id); if(c) c.classList.add('adf-active'); }); updateArchiveDueBtn(); const allChip=document.getElementById('adf-all'); if(allChip) allChip.classList.add('adf-active'); document.getElementById('archiveSearch').value=''; document.getElementById('archiveSortSelect').value='date_desc'; document.getElementById('resetModal').style.display='none'; renderArchiveInsight(); renderArchiveList(); document.getElementById('archiveModal').style.display='flex'; }
+function openArchiveModal() { archiveFieldFilter='all'; archiveDateFilter='all'; archiveTagFilter='all'; archiveSubjectFilter='all'; archiveCountFilter='all'; archiveSourceFilter='all'; archiveMasteryFilter='all'; archiveDueFilter='all'; archiveReflectFilter='all'; document.querySelectorAll('.adf-chip').forEach(c=>c.classList.remove('adf-active')); ['adf-all','acf-all','asf-all','amf-all','arf-all','axf-all'].forEach(function(id){ const c=document.getElementById(id); if(c) c.classList.add('adf-active'); }); backfillArchiveReflect(); updateArchiveDueBtn(); const allChip=document.getElementById('adf-all'); if(allChip) allChip.classList.add('adf-active'); document.getElementById('archiveSearch').value=''; document.getElementById('archiveSortSelect').value='date_desc'; document.getElementById('resetModal').style.display='none'; renderArchiveInsight(); renderArchiveList(); document.getElementById('archiveModal').style.display='flex'; }
 function closeArchiveModal() { document.getElementById('archiveModal').style.display='none'; }
 
 let archiveFieldFilter = 'all';
@@ -6833,6 +6850,26 @@ let archiveCountFilter = 'all';
 /* 숙달 필터: all / weak(연속정답 2회 미만 = 아직 취약) / mastered(2회 이상 = 잡음) */
 let archiveMasteryFilter = 'all';
 let archiveDueFilter = 'all';        /* all / due(오늘 복습할 것) */
+let archiveReflectFilter = 'all';    /* all / misconception / careless / unknown */
+const REFLECT_META = { misconception:{i:'🔴',t:'개념 오해'}, careless:{i:'🟡',t:'실수'}, unknown:{i:'⚪',t:'처음 봄'} };
+function setArchiveReflectFilter(f) {
+    archiveReflectFilter = f;
+    document.querySelectorAll('[id^="axf-"]').forEach(b => b.classList.remove('adf-active'));
+    const el = document.getElementById('axf-' + f); if(el) el.classList.add('adf-active');
+    renderArchiveList();
+}
+/* 이미 쌓인 아카이브에 원인 소급 적용 — 문제은행에 분류가 있으면 가져온다 */
+function backfillArchiveReflect(){
+    if(typeof bank==='undefined' || !bank || !bank.length) return 0;
+    const map = {};
+    bank.forEach(function(q){ if(q && q.reflectType) map[archiveKeyOf(q)] = q.reflectType; });
+    let n=0;
+    wrongArchive.forEach(function(a){
+        if(!a.reflectType && a.key && map[a.key]){ a.reflectType = map[a.key]; n++; }
+    });
+    if(n) saveArchive();
+    return n;
+}
 const ARCHIVE_MASTER_STREAK = 2;
 function isArchiveMastered(a){ return (a.practice_streak||0) >= ARCHIVE_MASTER_STREAK; }
 
@@ -6988,6 +7025,25 @@ function renderArchiveInsight() {
     }
 }
 
+/* 아카이브 복습 중 오답 원인 기록 — 문제은행 쪽 분류와도 동기화 */
+function recordArchiveReflect(type){
+    const a = aqList[aqIdx];
+    if(!a) return;
+    a.reflectType = type;
+    const ai = wrongArchive.findIndex(x => x.id === a.id);
+    if(ai >= 0) wrongArchive[ai].reflectType = type;
+    saveArchive();
+    try{
+        if(typeof bank!=='undefined' && bank && a.key){
+            const bq = bank.find(q => q && archiveKeyOf(q) === a.key);
+            if(bq){ bq.reflectType = type; if(typeof saveDataLocal==='function') saveDataLocal(); }
+        }
+    }catch(e){}
+    document.querySelectorAll('#aqReflectRow .aq-reflect-btn').forEach(b => b.style.opacity='0.45');
+    const m = REFLECT_META[type] || {i:'',t:type};
+    if(typeof showToast==='function') showToast(m.i + ' ' + m.t + ' 기록됨');
+}
+
 /* 취약 과목만 바로 풀기 — 아직 안 잡힌 문제(연속정답 2회 미만) 우선 */
 function startArchiveWeakSubject(subject){
     let list = wrongArchive.filter(a => (a.subject||'미분류') === subject);
@@ -7066,7 +7122,8 @@ function renderArchiveList() {
         const practiceAcc=a.practice_total>0?Math.round(a.practice_correct/a.practice_total*100):null;
         const practiceStr=(practiceAcc!==null?`<span style="background:var(--primary-light);color:var(--primary)">🎯 ${a.practice_correct}/${a.practice_total} (${practiceAcc}%)</span>`:'')
             + (isArchiveMastered(a)?`<span style="background:var(--success-light,#DCFCE7);color:var(--success,#16A34A);font-weight:800">✅ 잡음</span>`:'')
-            + (isArchiveDue(a)?`<span style="background:var(--primary-light);color:var(--primary);font-weight:800">📅 오늘 복습</span>`:`<span style="background:var(--bg);color:var(--text-muted)">${archiveDueLabel(a)}</span>`);
+            + (isArchiveDue(a)?`<span style="background:var(--primary-light);color:var(--primary);font-weight:800">📅 오늘 복습</span>`:`<span style="background:var(--bg);color:var(--text-muted)">${archiveDueLabel(a)}</span>`)
+            + (a.reflectType&&REFLECT_META[a.reflectType]?`<span style="background:var(--bg);color:var(--text-sub);font-weight:700">${REFLECT_META[a.reflectType].i} ${REFLECT_META[a.reflectType].t}</span>`:'');
         const qField=fieldMap[a.tag]||getAutoField(a.tag);
         const fieldBadge=qField?`<span style="font-size:0.72em;padding:2px 7px;border-radius:10px;font-weight:700;color:#fff;background:${FIELD_COLORS[qField]||'#64748B'}">${qField}</span>`:'';
         return `<div class="archive-item" id="arc-${a.id}" onclick="startArchivePracticeFrom('${a.id}')" style="cursor:pointer">
@@ -7115,6 +7172,7 @@ function getFilteredArchiveList() {
         if(archiveMasteryFilter==='weak' && isArchiveMastered(a)) return false;
         if(archiveMasteryFilter==='mastered' && !isArchiveMastered(a)) return false;
         if(archiveDueFilter==='due' && !isArchiveDue(a)) return false;
+        if(archiveReflectFilter!=='all' && a.reflectType!==archiveReflectFilter) return false;
         return true;
     });
 }
@@ -7153,6 +7211,7 @@ function renderArchiveQuiz() {
     document.getElementById('aqDoneBox').style.display='none';
     document.getElementById('aqQuizView').style.display='block';
     document.getElementById('aqFooter').style.display='flex';
+    { const _rr=document.getElementById('aqReflectRow'); if(_rr) _rr.style.display='none'; }  /* 새 문제로 넘어가면 숨김 */
     document.getElementById('aqMeta').innerHTML='<span class="aq-badge">'+escapeHtml(a.tag)+'</span><span class="aq-badge">'+escapeHtml(a.subject)+'</span><span class="aq-badge red">❌ '+(a.wrongCount||1)+'회 틀림</span>'+(a.practice_total>0?'<span class="aq-badge" style="background:var(--primary-light);color:var(--primary)">🎯 풀기 '+a.practice_total+'회</span>':'');
     document.getElementById('aqQuestion').innerText=a.question;
     const optsDiv=document.getElementById('aqOptions'); optsDiv.innerHTML='';
@@ -7204,6 +7263,14 @@ function submitArchiveAnswer() {
     rb.classList.add('show');
     rt.className='aq-result-title '+(isCorrect?'correct':'wrong');
     rt.innerText=isCorrect?'✅ 정답입니다!':'❌ 오답 — 정답: '+a.answer;
+    /* 틀렸을 때만 '왜 틀렸나' 분류 노출 */
+    {
+        const _rr=document.getElementById('aqReflectRow');
+        if(_rr){
+            _rr.style.display = isCorrect ? 'none' : 'block';
+            _rr.querySelectorAll('.aq-reflect-btn').forEach(b => b.style.opacity = (a.reflectType ? '0.45' : '1'));
+        }
+    }
     re.innerText=(a.ai_tip||a.original_explanation||'해설 정보가 없습니다.');
     // V162: 해설 수식 렌더링
     renderMath(re);
@@ -9127,6 +9194,13 @@ function recordReflect(type) {
     const q = bank[filteredIndices[currentIndex]];
     if(!q) return;
     q.reflectType = type;
+    /* 오답 아카이브에도 원인을 남긴다 — 분류는 채점 뒤에 하므로 여기서 따로 반영해야 한다
+       (이게 없어서 아카이브에는 '왜 틀렸는지'가 전혀 안 남았다) */
+    try{
+        const _k = archiveKeyOf(q);
+        const _ai = wrongArchive.findIndex(a => a.key === _k);
+        if(_ai >= 0){ wrongArchive[_ai].reflectType = type; saveArchive(); }
+    }catch(e){}
     // 버튼 시각 피드백
     document.querySelectorAll('.reflect-btn').forEach(btn => btn.style.opacity='0.5');
     const map = { misconception:'🔴', careless:'🟡', unknown:'⚪' };
