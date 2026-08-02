@@ -4494,6 +4494,7 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
                 <div class="aq-done-score" id="aqDoneScore"></div>
                 <div class="aq-done-msg" id="aqDoneMsg"></div>
                 <div class="aq-done-note">📌 아카이브 기록은 영구 보존됩니다.</div>
+                <button class="aq-btn aq-btn-primary" id="aqRetryMissedBtn" style="width:100%;margin-bottom:10px;background:var(--danger);display:none" onclick="startArchiveRetryMissed()">🎯 방금 틀린 것만 다시 풀기</button>
                 <button class="aq-btn aq-btn-primary" style="width:100%;margin-bottom:10px" onclick="startArchivePractice()">🔄 다시 풀기</button>
                 <button class="aq-btn aq-btn-secondary" style="width:100%" onclick="closeArchiveQuiz()">목록으로</button>
             </div>
@@ -6989,6 +6990,7 @@ function escapeHtml(str){ if(!str) return ''; return String(str).replace(/&/g,'&
    ARCHIVE QUIZ
 ============================================================ */
 let aqList=[],aqIdx=0,aqAnswered=false,aqCorrect=0,aqWrong=0;
+let aqMissed=[];   /* 이번 세션에 틀린 문제 — 끝나고 '틀린 것만 다시 풀기'에 사용 */
 
 function getFilteredArchiveList() {
     const keyword=(document.getElementById('archiveSearch').value||'').toLowerCase();
@@ -7013,7 +7015,7 @@ function startArchivePractice() {
     let list = getFilteredArchiveList();
     if(list.length===0){showToast('필터 조건에 맞는 문제가 없습니다.');return;}
     for(let i=list.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[list[i],list[j]]=[list[j],list[i]];}
-    aqList=list; aqIdx=0; aqCorrect=0; aqWrong=0; aqAnswered=false;
+    aqList=list; aqIdx=0; aqCorrect=0; aqWrong=0; aqAnswered=false; aqMissed=[];
     document.getElementById('archiveModal').style.display='none';
     document.getElementById('archiveQuizModal').style.display='flex';
     renderArchiveQuiz();
@@ -7021,7 +7023,13 @@ function startArchivePractice() {
 function startArchivePracticeFrom(id) {
     const item = wrongArchive.find(a => String(a.id) === String(id));
     if(!item) return;
-    aqList=[item]; aqIdx=0; aqCorrect=0; aqWrong=0; aqAnswered=false;
+    /* 목록에서 고른 문제 '부터' 화면에 보이는 목록 전체를 이어서 풀 수 있게 한다.
+       (예전엔 [item] 하나만 실어서 '다음 ▶'이 없었다 — 한 문제 풀면 흐름이 끊겼음) */
+    let list = getFilteredArchiveList();
+    const pos = list.findIndex(a => String(a.id) === String(id));
+    if(pos < 0){ list = [item]; }        // 필터가 바뀌어 목록에 없으면 그 문제만
+    aqList = list; aqIdx = pos < 0 ? 0 : pos;
+    aqCorrect=0; aqWrong=0; aqAnswered=false; aqMissed=[];
     document.getElementById('archiveModal').style.display='none';
     document.getElementById('archiveQuizModal').style.display='flex';
     renderArchiveQuiz();
@@ -7069,7 +7077,7 @@ function submitArchiveAnswer() {
     const myVal=selected.dataset.val;
     const isCorrect=compareAnswers(myVal,a.answer);
     document.querySelectorAll('#aqOptions .aq-option').forEach(el=>{ const v=el.dataset.val; el.onclick=null; if(compareAnswers(v,a.answer)) el.classList.add('correct'); else if(v===myVal&&!isCorrect) el.classList.add('wrong'); });
-    if(isCorrect) aqCorrect++; else aqWrong++;
+    if(isCorrect) aqCorrect++; else { aqWrong++; if(!aqMissed.some(x=>x.id===a.id)) aqMissed.push(a); }
     document.getElementById('aqScoreText').innerHTML='✅ '+aqCorrect+' &nbsp; ❌ '+aqWrong;
     const archIdx=wrongArchive.findIndex(x=>x.id===a.id);
     if(archIdx>=0){ wrongArchive[archIdx].practice_total=(wrongArchive[archIdx].practice_total||0)+1; if(isCorrect) wrongArchive[archIdx].practice_correct=(wrongArchive[archIdx].practice_correct||0)+1; saveArchive(); }
@@ -7093,21 +7101,39 @@ function archiveQuizNav(step) {
     aqIdx=next; renderArchiveQuiz();
 }
 function showArchiveQuizDone() {
-    const total=aqList.length, acc=total===0?0:Math.round(aqCorrect/total*100);
+    /* 정답률은 '실제 푼 문제' 기준 — 목록 중간부터 시작했거나 건너뛴 경우에도 정확하게 */
+    const total=aqList.length;
+    const attempted=aqCorrect+aqWrong;
+    const acc=attempted===0?0:Math.round(aqCorrect/attempted*100);
     document.getElementById('aqQuizView').style.display='none';
     document.getElementById('aqFooter').style.display='none';
     document.getElementById('aqProgressBar').style.width='100%';
     document.getElementById('aqIndexText').innerText=total+' / '+total;
     const doneBox=document.getElementById('aqDoneBox'); doneBox.style.display='block';
     document.getElementById('aqDoneEmoji').innerText=acc>=80?'🎉':acc>=60?'👏':'💪';
-    document.getElementById('aqDoneScore').innerText=acc+'% ('+aqCorrect+'/'+total+')';
+    document.getElementById('aqDoneScore').innerText=acc+'% ('+aqCorrect+'/'+attempted+')';
     let msg='';
     if(acc>=90) msg='완벽에 가깝습니다! 꾸준히 풀면 확실히 잡을 수 있어요.';
     else if(acc>=70) msg='잘 하고 있습니다! 틀린 문제 해설을 다시 한 번 확인해보세요.';
     else if(acc>=50) msg='절반은 맞췄어요. 계속 반복하면 분명 좋아집니다.';
     else msg='아직 어렵지만 괜찮습니다. 아카이브 풀기를 반복하세요!';
     document.getElementById('aqDoneMsg').innerText=msg;
+    /* 방금 틀린 문제가 있으면 바로 재도전 버튼 노출 (기억이 살아있을 때 다시 = 학습효과 최대) */
+    const rmBtn=document.getElementById('aqRetryMissedBtn');
+    if(rmBtn){
+        if(aqMissed.length){ rmBtn.style.display='block'; rmBtn.innerText='🎯 방금 틀린 '+aqMissed.length+'문제만 다시 풀기'; }
+        else rmBtn.style.display='none';
+    }
     if(acc>=80) fireConfetti(false);
+}
+
+/* 방금 틀린 문제만 다시 — 아카이브 목록과 무관하게 이 세션의 오답으로 새 세션 시작 */
+function startArchiveRetryMissed() {
+    if(!aqMissed.length){ showToast('다시 풀 문제가 없습니다.'); return; }
+    aqList = aqMissed.slice();
+    aqIdx=0; aqCorrect=0; aqWrong=0; aqAnswered=false; aqMissed=[];
+    document.getElementById('archiveQuizModal').style.display='flex';
+    renderArchiveQuiz();   /* doneBox 숨김·퀴즈뷰 복원은 여기서 처리됨 */
 }
 
 /* ============================================================
