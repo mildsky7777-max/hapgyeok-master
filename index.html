@@ -7025,6 +7025,23 @@ function renderArchiveInsight() {
     }
 }
 
+/* 상단 점수 — ❌ 부분을 누르면 '지금까지 틀린 것만' 바로 다시 풀 수 있다 */
+function aqScoreHtml(){
+    const n = aqMissed.length;
+    const wrongPart = n > 0
+        ? `<span onclick="retryMissedNow()" title="틀린 문제만 다시 풀기" style="cursor:pointer;text-decoration:underline;text-underline-offset:3px">❌ ${aqWrong} ↻</span>`
+        : `❌ ${aqWrong}`;
+    return '✅ ' + aqCorrect + ' &nbsp; ' + wrongPart;
+}
+function updateAqScore(){ const el=document.getElementById('aqScoreText'); if(el) el.innerHTML = aqScoreHtml(); }
+function retryMissedNow(){
+    if(!aqMissed.length){ showToast('아직 틀린 문제가 없어요.'); return; }
+    const n = aqMissed.length;
+    showConfirm('지금까지 틀린 ' + n + '문제만 다시 풀까요?\n(현재 목록 진행은 여기서 종료됩니다. 푼 기록은 저장돼 있어요)', function(){
+        startArchiveRetryMissed();
+    });
+}
+
 /* 아카이브 복습 중 오답 원인 기록 — 문제은행 쪽 분류와도 동기화 */
 function recordArchiveReflect(type){
     const a = aqList[aqIdx];
@@ -7207,7 +7224,7 @@ function renderArchiveQuiz() {
     document.getElementById('aqTitle').innerText='📚 아카이브 풀기 ('+a.tag+')';
     document.getElementById('aqProgressBar').style.width=((aqIdx+1)/total*100)+'%';
     document.getElementById('aqIndexText').innerText=(aqIdx+1)+' / '+total;
-    document.getElementById('aqScoreText').innerHTML='✅ '+aqCorrect+' &nbsp; ❌ '+aqWrong;
+    updateAqScore();
     document.getElementById('aqDoneBox').style.display='none';
     document.getElementById('aqQuizView').style.display='block';
     document.getElementById('aqFooter').style.display='flex';
@@ -7246,7 +7263,7 @@ function submitArchiveAnswer() {
     const isCorrect=compareAnswers(myVal,a.answer);
     document.querySelectorAll('#aqOptions .aq-option').forEach(el=>{ const v=el.dataset.val; el.onclick=null; if(compareAnswers(v,a.answer)) el.classList.add('correct'); else if(v===myVal&&!isCorrect) el.classList.add('wrong'); });
     if(isCorrect) aqCorrect++; else { aqWrong++; if(!aqMissed.some(x=>x.id===a.id)) aqMissed.push(a); }
-    document.getElementById('aqScoreText').innerHTML='✅ '+aqCorrect+' &nbsp; ❌ '+aqWrong;
+    updateAqScore();
     const archIdx=wrongArchive.findIndex(x=>x.id===a.id);
     if(archIdx>=0){
         const _it = wrongArchive[archIdx];
