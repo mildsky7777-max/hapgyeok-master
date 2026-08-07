@@ -4440,6 +4440,9 @@ body.dark-mode .wrong-compare-correct { background: #052E16; border-color: #1665
                     <button onclick="setArchiveDateFilter('week')"  id="adf-week"  class="adf-chip">이번 주</button>
                     <button onclick="setArchiveDateFilter('month')" id="adf-month" class="adf-chip">이번 달</button>
                 </div>
+                <select id="archiveDateSelect" onchange="setArchiveDateExact(this.value)" style="width:100%;margin-bottom:8px;padding:7px 10px;border-radius:10px;border:1.5px solid var(--border);font-size:0.83em;background:var(--bg);outline:none;color:var(--text)">
+                    <option value="">📅 틀린 날짜 선택 (전체)</option>
+                </select>
                 <div style="display:flex;gap:6px;margin-bottom:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px;scrollbar-width:none">
                     <span style="font-size:0.75em;font-weight:700;color:var(--text-muted);align-self:center;flex-shrink:0">출처</span>
                     <button onclick="setArchiveSourceFilter('all')" id="asf-all" class="adf-chip adf-active">전체</button>
@@ -6838,7 +6841,7 @@ function addToArchive(q) {
     saveArchive();
 }
 function saveArchive() { localStorage.setItem('wrongArchive_v50',JSON.stringify(wrongArchive)); }
-function openArchiveModal() { archiveFieldFilter='all'; archiveDateFilter='all'; archiveTagFilter='all'; archiveSubjectFilter='all'; archiveCountFilter='all'; archiveSourceFilter='all'; archiveMasteryFilter='all'; archiveDueFilter='all'; archiveReflectFilter='all'; document.querySelectorAll('.adf-chip').forEach(c=>c.classList.remove('adf-active')); ['adf-all','acf-all','asf-all','amf-all','arf-all','axf-all'].forEach(function(id){ const c=document.getElementById(id); if(c) c.classList.add('adf-active'); }); backfillArchiveReflect(); updateArchiveDueBtn(); const allChip=document.getElementById('adf-all'); if(allChip) allChip.classList.add('adf-active'); document.getElementById('archiveSearch').value=''; document.getElementById('archiveSortSelect').value='date_desc'; document.getElementById('resetModal').style.display='none'; renderArchiveInsight(); renderArchiveList(); document.getElementById('archiveModal').style.display='flex'; }
+function openArchiveModal() { archiveFieldFilter='all'; archiveDateFilter='all'; archiveTagFilter='all'; archiveSubjectFilter='all'; archiveCountFilter='all'; archiveSourceFilter='all'; archiveMasteryFilter='all'; archiveDueFilter='all'; archiveReflectFilter='all'; archiveDateExact=''; document.querySelectorAll('.adf-chip').forEach(c=>c.classList.remove('adf-active')); ['adf-all','acf-all','asf-all','amf-all','arf-all','axf-all'].forEach(function(id){ const c=document.getElementById(id); if(c) c.classList.add('adf-active'); }); backfillArchiveReflect(); renderArchiveDateOptions(); updateArchiveDueBtn(); const allChip=document.getElementById('adf-all'); if(allChip) allChip.classList.add('adf-active'); document.getElementById('archiveSearch').value=''; document.getElementById('archiveSortSelect').value='date_desc'; document.getElementById('resetModal').style.display='none'; renderArchiveInsight(); renderArchiveList(); document.getElementById('archiveModal').style.display='flex'; }
 function closeArchiveModal() { document.getElementById('archiveModal').style.display='none'; }
 
 let archiveFieldFilter = 'all';
@@ -6950,6 +6953,39 @@ function setArchiveDateFilter(f) {
     const btn = document.getElementById('adf-' + f);
     if(btn) btn.classList.add('adf-active');
     renderArchiveList();
+}
+
+/* 특정 날짜로 좁히기 — 처음 틀린 날(firstDate) 또는 마지막으로 틀린 날(lastDate)이 그날이면 포함.
+   (앱은 두 날짜만 저장하므로, 이게 '그날 틀린 문제'에 가장 가깝다) */
+let archiveDateExact = '';
+function archiveDateMatches(a, d){ return (a.firstDate||'') === d || (a.lastDate||'') === d; }
+function setArchiveDateExact(d){
+    archiveDateExact = d || '';
+    if(archiveDateExact){          /* 특정 날짜를 고르면 오늘/주/달 칩과 충돌하지 않게 '전체'로 */
+        archiveDateFilter = 'all';
+        document.querySelectorAll('[id^="adf-"]').forEach(b => b.classList.remove('adf-active'));
+        const c = document.getElementById('adf-all'); if(c) c.classList.add('adf-active');
+    }
+    renderArchiveList();
+}
+/* 오답이 실제로 있는 날짜만 최신순으로, 개수와 함께 */
+function renderArchiveDateOptions(){
+    const sel = document.getElementById('archiveDateSelect');
+    if(!sel) return;
+    const counts = {};
+    wrongArchive.forEach(function(a){
+        const ds = new Set([a.firstDate, a.lastDate].filter(Boolean));
+        ds.forEach(function(d){ counts[d] = (counts[d]||0) + 1; });
+    });
+    const dates = Object.keys(counts).sort().reverse();
+    const prev = archiveDateExact;
+    sel.innerHTML = '<option value="">📅 틀린 날짜 선택 (전체)</option>' +
+        dates.map(function(d){
+            const md = d.slice(5).replace('-','/');
+            return '<option value="'+d+'">'+md+' — '+counts[d]+'개</option>';
+        }).join('');
+    sel.value = dates.indexOf(prev) >= 0 ? prev : '';
+    if(sel.value !== prev) archiveDateExact = sel.value;
 }
 
 function getDateFilterFn() {
@@ -7176,6 +7212,7 @@ function getFilteredArchiveList() {
     const keyword=(document.getElementById('archiveSearch').value||'').toLowerCase();
     const dateFilterFn = getDateFilterFn();
     return wrongArchive.filter(a => {
+        if(archiveDateExact && !archiveDateMatches(a, archiveDateExact)) return false;
         if(!dateFilterFn(a)) return false;
         if(keyword && !(a.question+a.tag+a.subject+a.answer).toLowerCase().includes(keyword)) return false;
         if(archiveFieldFilter!=='all'){ const af=fieldMap[a.tag]||getAutoField(a.tag); if(af!==archiveFieldFilter) return false; }
